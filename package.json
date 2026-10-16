@@ -1,0 +1,30 @@
+{
+  "name": "vdoc-server",
+  "private": true,
+  "type": "module",
+  "description": "Voice session server for vdoc: authenticates documents, configures the realtime agent and governs its tool calls. Built on vRealTime.",
+  "engines": { "node": ">=22.13" },
+  "workspaces": ["packages/*", "packages/adapters/*", "apps/*"],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p apps/worker/tsconfig.json",
+    "test": "vitest run",
+    "check:architecture": "node scripts/check-architecture.mjs",
+    "check": "npm run typecheck && npm run check:architecture && npm test",
+    "dev": "npm run dev -w @vdoc-server/app-node"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  },
+  "overrides": {
+    "@vrealtime/core": "file:vendor/vrealtime/vrealtime-core-0.1.0.tgz",
+    "@vrealtime/protocol": "file:vendor/vrealtime/vrealtime-protocol-0.1.0.tgz",
+    "@vrealtime/server": "file:vendor/vrealtime/vrealtime-server-0.1.0.tgz",
+    "@vrealtime/openai-compatible": "file:vendor/vrealtime/vrealtime-openai-compatible-0.1.0.tgz",
+    "@vrealtime/boson": "file:vendor/vrealtime/vrealtime-boson-0.1.0.tgz",
+    "@vrealtime/openai": "file:vendor/vrealtime/vrealtime-openai-0.1.0.tgz",
+    "@vrealtime/testing": "file:vendor/vrealtime/vrealtime-testing-0.1.0.tgz",
+    "@vrealtime/client": "file:vendor/vrealtime/vrealtime-client-0.1.0.tgz"
+  }
+}

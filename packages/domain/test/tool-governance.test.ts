@@ -1,0 +1,70 @@
+import { describe, expect, it } from 'vitest';
+import { RiskAssessor, fingerprint } from '../src';
+import { activeSession, call, governance, ops } from './fixtures';
+
+describe('RiskAssessor', () => {
+  const assessor = new RiskAssessor();
+
+  it('rates batches by their riskiest operation and summarises them without content', () => {
+    expect(assessor.assess(call('apply_document_operations', ops('text.style', 'text.insert')))).toEqual({ risk: 'low', operations: ['text.style', 'text.insert'] });
+    expect(assessor.assess(call('apply_document_operations', ops('text.style', 'text.delete'))).risk).toBe('medium');
+    expect(assessor.assess(call('apply_document_operations', ops('table.edit:deleteTable'))).risk).toBe('high');
+    expect(assessor.assess(call('apply_document_operations', ops('table.edit:rowAfter'))).risk).toBe('low');
+    expect(assessor.assess(call('apply_document_operations', ops('text.findReplace'))).risk).toBe('high');
+  });
+
+  it('treats unknown operations and tools as medium, and very large batches as high', () => {
+    expect(assessor.assess(call('apply_document_operations', ops('something.new'))).risk).toBe('medium');
+    expect(assessor.assess(call('mystery', {})).risk).toBe('medium');
+    expect(assessor.assess(call('apply_document_operations', ops(...Array(25).fill('text.style')))).risk).toBe('high');
+  });
+});
+
+describe('fingerprint', () => {
+  it('ignores ids, version preconditions and key order', () => {
+    const a = { id: 'x', expectedRevision: 3, target: { kind: 'block', id: 'b1' }, operations: [{ type: 'text.delete' }] };
+    const b = { operations: [{ type: 'text.delete' }], target: { id: 'b1', kind: 'block' }, expectedRevision: 9, id: 'y' };
+    expect(fingerprint({ name: 'apply_document_operations', arguments: a })).toBe(fingerprint({ name: 'apply_document_operations', arguments: b }));
+    expect(fingerprint({ name: 'apply_document_operations', arguments: { ...a, operations: [{ type: 'text.insert' }] } })).not.toBe(fingerprint({ name: 'apply_document_operations', arguments: a }));
+  });
+});
+
+describe('VoiceSession.reviewToolCall', () => {
+  it('allows ordinary edits and counts them per turn', () => {
+    const session = activeSession();
+    expect(session.reviewToolCall(call('apply_document_operations', ops('text.style')), governance(), 2_000)).toEqual({ kind: 'allow', risk: 'low' });
+    expect(session.usage).toMatchObject({ toolCalls: 1, toolCallsInTurn: 1 });
+    const [event] = session.pullEvents();
+    expect(event).toMatchObject({ type: 'ToolCallReviewed', decision: 'allow', operations: ['text.style'] });
+  });
+
+  it('refuses tools the profile does not list', () => {
+    const decision = activeSession().reviewToolCall(call('delete_everything', {}), governance(), 2_000);
+    expect(decision).toMatchObject({ kind: 'deny', code: 'UNKNOWN_TOOL' });
+  });
+
+  it('stops a turn that keeps calling tools', () => {
+    const session = activeSession(0, { maxToolCallsPerTurn: 2 });
+    const read = () => session.reviewToolCall(call('read_document', {}, 't1'), governance(), 1);
+    expect(read().kind).toBe('allow');
+    expect(read().kind).toBe('allow');
+    expect(read()).toMatchObject({ kind: 'deny', code: 'TOOL_BUDGET_EXCEEDED' });
+    expect(session.reviewToolCall(call('read_document', {}, 't2'), governance(), 2).kind).toBe('allow');
+  });
+
+  it('asks before a destructive edit and allows the same request only in a later turn', () => {
+    const session = activeSession();
+    const destructive = (turn: string, revision: number) => call('apply_document_operations', { expectedRevision: revision, ...ops('table.edit:deleteTable') }, turn);
+    expect(session.reviewToolCall(destructive('t1', 4), governance(), 1)).toMatchObject({ kind: 'confirm', risk: 'high' });
+    expect(session.reviewToolCall(destructive('t1', 4), governance(), 2).kind).toBe('confirm');
+    expect(session.reviewToolCall(destructive('t2', 5), governance(), 3)).toEqual({ kind: 'allow', risk: 'high' });
+    expect(session.reviewToolCall(destructive('t3', 6), governance(), 4).kind).toBe('confirm');
+  });
+
+  it('denies every call once the session is closed', () => {
+    const session = activeSession();
+    session.end('client', 2);
+    expect(session.reviewToolCall(call('read_document', {}), governance(), 3)).toMatchObject({ kind: 'deny', code: 'SESSION_CLOSED' });
+    expect(activeSession(0, { maxDurationMs: 10 }).reviewToolCall(call('read_document', {}), governance(), 10)).toMatchObject({ kind: 'deny', code: 'SESSION_CLOSED' });
+  });
+});
