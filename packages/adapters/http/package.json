@@ -1,0 +1,10 @@
+{
+  "name": "@vdoc-server/adapter-http",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "description": "HTTP adapter for vdoc-server on Web-standard Request/Response: routes, controllers, CORS and problem+json errors.",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@vdoc-server/application": "0.1.0", "@vdoc-server/domain": "0.1.0" }
+}

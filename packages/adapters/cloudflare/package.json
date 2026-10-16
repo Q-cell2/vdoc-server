@@ -1,0 +1,10 @@
+{
+  "name": "@vdoc-server/adapter-cloudflare",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "description": "Cloudflare adapters for vdoc-server: Durable Object storage for voice sessions.",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@vdoc-server/domain": "0.1.0" }
+}

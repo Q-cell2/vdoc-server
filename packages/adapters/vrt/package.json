@@ -1,0 +1,20 @@
+{
+  "name": "@vdoc-server/adapter-vrt",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "description": "Realtime adapter: runs vdoc voice sessions on vRealTime (model registry, per-session hubs, hooks wired to use cases).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@vdoc-server/application": "0.1.0",
+    "@vdoc-server/domain": "0.1.0",
+    "@vrealtime/boson": "file:../../../vendor/vrealtime/vrealtime-boson-0.1.0.tgz",
+    "@vrealtime/core": "file:../../../vendor/vrealtime/vrealtime-core-0.1.0.tgz",
+    "@vrealtime/openai": "file:../../../vendor/vrealtime/vrealtime-openai-0.1.0.tgz",
+    "@vrealtime/server": "file:../../../vendor/vrealtime/vrealtime-server-0.1.0.tgz",
+    "@vrealtime/testing": "file:../../../vendor/vrealtime/vrealtime-testing-0.1.0.tgz"
+  }
+}
