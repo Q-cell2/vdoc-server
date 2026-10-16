@@ -1,0 +1,17 @@
+{
+  // One Durable Object per document hosts that document's voice sessions and their realtime connections.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "vdoc-server",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "durable_objects": {
+    "bindings": [{ "name": "VOICE_ROOMS", "class_name": "DocumentVoiceRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DocumentVoiceRoom"] }],
+  "vars": {
+    "VDOC_SERVER_ENV": "production",
+    "VDOC_SERVER_MODEL": "boson"
+  }
+  // Secrets (wrangler secret put): VDOC_SERVER_SIGNING_KEYS, VDOC_SERVER_CLIENTS, BOSON_API_KEY,
+  // and optionally VDOC_SERVER_ALLOWED_ORIGINS. Local development reads them from .dev.vars.
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@vdoc-server/app-node",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "vdoc-server on Node: one process, in-memory sessions. For development and single-instance deployments.",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@vdoc-server/adapter-http": "0.1.0",
+    "@vdoc-server/adapter-memory": "0.1.0",
+    "@vdoc-server/adapter-vrt": "0.1.0",
+    "@vdoc-server/composition": "0.1.0",
+    "@vdoc-server/config": "0.1.0",
+    "ws": "8.18.3"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.1",
+    "@vrealtime/client": "file:../../vendor/vrealtime/vrealtime-client-0.1.0.tgz",
+    "tsx": "4.20.6"
+  }
+}
