@@ -18,7 +18,7 @@
   },
   "devDependencies": {
     "@types/ws": "8.18.1",
-    "@vrealtime/client": "file:../../vendor/vrealtime/vrealtime-client-0.1.0.tgz",
+    "@vrealtime/client": "0.1.0",
     "tsx": "4.20.6"
   }
 }

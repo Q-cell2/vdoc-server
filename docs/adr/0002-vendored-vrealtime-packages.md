@@ -1,6 +1,6 @@
 # ADR 0002：在 npm 发布前固定使用 vendored 的 vRealTime 包
 
-状态：已采纳（2026-10-16），`@vrealtime/*` 发布到 npm 后废弃
+状态：已废弃（2026-10-17）。`@vrealtime/*@0.1.0` 已发布到 npm（vRT 标签 `v0.1.0`，包含 PR #21），依赖改为 npm 上的固定版本，`vendor/` 已删除（#6）。
 
 ## 背景
 

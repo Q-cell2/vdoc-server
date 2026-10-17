@@ -123,5 +123,4 @@ packages/
 apps/
   node/                Node 运行时
   worker/              Cloudflare Worker 运行时
-vendor/vrealtime/      固定版本的 vRealTime 包（npm 发布前）
 ```
