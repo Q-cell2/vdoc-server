@@ -105,6 +105,12 @@ npm run check
 
 依次执行类型检查（Node 与 Workers 两套）、架构依赖检查和全部测试。
 
+```bash
+npm run test:workerd
+```
+
+在 workerd（`wrangler dev --local`）里启动 Worker，用假模型和临时密钥跑一遍 Durable Object 路径：签发会话、续签授权后连接、执行 App 端工具并检查审计日志、`DELETE` 结束会话、再连接被 4410 拒绝。不需要任何密钥，CI 里作为单独的 `worker` job 运行。
+
 ## 包结构
 
 ```

@@ -30,3 +30,17 @@ jobs:
       - name: Bundle the Worker (dry run, no deploy)
         run: npx wrangler deploy --dry-run --outdir dist
         working-directory: apps/worker
+
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        run: npm ci --no-audit --no-fund
+      - name: End-to-end in workerd (Durable Objects, fake model)
+        run: npm run test:workerd
