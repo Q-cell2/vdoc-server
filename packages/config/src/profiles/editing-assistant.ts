@@ -1,7 +1,7 @@
 import { AgentProfile, InstructionTemplate, ProfileId, type ModelChoice, type SessionLimits } from '@vdoc-server/domain';
 
 /** Tools vdoc declares to the agent (vdoc issue #30). Anything else is refused by policy. */
-export const VDOC_TOOLS = ['read_document', 'read_blocks', 'get_context', 'apply_document_operations', 'undo_turn', 'reveal_block'] as const;
+export const VDOC_TOOLS = ['read_document', 'read_blocks', 'get_context', 'apply_document_operations', 'undo_turn'] as const;
 
 const INSTRUCTIONS = `You are the voice editing assistant inside vdoc, a document editor. The user talks to you while looking at their document.
 

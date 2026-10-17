@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { editingAssistantProfile, loadConfig } from '../src';
+import { VDOC_RISK_TABLE } from '@vdoc-server/domain';
+import { VDOC_TOOLS, editingAssistantProfile, loadConfig } from '../src';
 
 const KEY = 'k'.repeat(40);
 
@@ -43,5 +44,11 @@ describe('editing assistant profile', () => {
     expect(profile.allowedTools.has('apply_document_operations')).toBe(true);
     expect(profile.allowedTools.has('run_shell')).toBe(false);
     expect(profile.instructionsFor({ language: 'zh-CN', documentTitle: 'Q3 "plan"' })).toContain(`titled "Q3 'plan'"`);
+  });
+
+  it('lists exactly the tools vdoc declares, each with a risk level', () => {
+    // vdoc's catalog: lib/usecases/document-tools.ts in Q-cell2/vdoc.
+    expect([...VDOC_TOOLS].sort()).toEqual(['apply_document_operations', 'get_context', 'read_blocks', 'read_document', 'undo_turn']);
+    expect(Object.keys(VDOC_RISK_TABLE.tools).sort()).toEqual([...VDOC_TOOLS].sort());
   });
 });
