@@ -8,6 +8,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p apps/worker/tsconfig.json",
     "test": "vitest run",
+    "test:workerd": "npm test -w @vdoc-server/app-worker",
     "check:architecture": "node scripts/check-architecture.mjs",
     "check": "npm run typecheck && npm run check:architecture && npm test",
     "dev": "npm run dev -w @vdoc-server/app-node"
