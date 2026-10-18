@@ -9,9 +9,10 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DocumentVoiceRoom"] }],
   "vars": {
-    "VDOC_SERVER_ENV": "production",
-    "VDOC_SERVER_MODEL": "boson"
-  }
+  "VDOC_SERVER_ENV": "production",
+  "VDOC_SERVER_MODEL": "boson",
+  "VDOC_SERVER_ALLOWED_ORIGINS": "https://vdoc.qyf070113.workers.dev,https://vdoc.ink"
+}
   // Secrets (wrangler secret put): VDOC_SERVER_SIGNING_KEYS, VDOC_SERVER_CLIENTS, BOSON_API_KEY,
   // and optionally VDOC_SERVER_ALLOWED_ORIGINS. Local development reads them from .dev.vars.
 }
