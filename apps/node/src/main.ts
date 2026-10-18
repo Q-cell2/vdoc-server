@@ -1,5 +1,5 @@
 import { loadConfig } from '@vdoc-server/config';
-import { createNodeServer } from './create';
+import { createNodeServer, openSessionStore } from './create';
 import { startNodeServer } from './node-server';
 
 const config = loadConfig(process.env);
@@ -8,14 +8,16 @@ if (!config.ok) {
   process.exit(1);
 }
 
-const server = await createNodeServer(config.value);
+const store = await openSessionStore(process.env.DATABASE_URL);
+const server = await createNodeServer(config.value, { sessions: store.sessions });
 const running = await startNodeServer(server, { port: Number(process.env.PORT ?? 8787), host: process.env.HOST ?? '127.0.0.1' });
-server.logger.log('info', 'vdoc-server listening', { port: running.port, environment: config.value.environment, model: config.value.model.provider });
+server.logger.log('info', 'vdoc-server listening', { port: running.port, environment: config.value.environment, model: config.value.model.provider, sessions: process.env.DATABASE_URL ? 'postgres' : 'memory' });
 for (const generated of config.value.generated) server.logger.log('warn', `development default: ${generated}`);
 
 const shutdown = async (signal: string): Promise<void> => {
   server.logger.log('info', 'shutting down', { signal });
   await running.close();
+  await store.close();
   process.exit(0);
 };
 process.once('SIGINT', () => void shutdown('SIGINT'));

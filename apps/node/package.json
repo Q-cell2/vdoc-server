@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "vdoc-server on Node: one process, in-memory sessions. For development and single-instance deployments.",
+  "description": "vdoc-server on Node: one process; sessions in PostgreSQL when DATABASE_URL is set, otherwise in memory.",
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts"
@@ -11,12 +11,15 @@
   "dependencies": {
     "@vdoc-server/adapter-http": "0.1.0",
     "@vdoc-server/adapter-memory": "0.1.0",
+    "@vdoc-server/adapter-postgres": "0.1.0",
     "@vdoc-server/adapter-vrt": "0.1.0",
     "@vdoc-server/composition": "0.1.0",
     "@vdoc-server/config": "0.1.0",
+    "pg": "8.23.1",
     "ws": "8.18.3"
   },
   "devDependencies": {
+    "@types/pg": "8.23.1",
     "@types/ws": "8.18.1",
     "@vrealtime/client": "0.1.0",
     "tsx": "4.20.6"

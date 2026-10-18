@@ -57,7 +57,7 @@ vdoc-server 是 vdoc 的语音会话服务端。它负责：谁能对哪篇文�
                     composition                     ← 组合根：唯一知道具体类的地方
              ┌───────────┼────────────┐
           adapters     config      （application、domain）
-   http · vrt · security · memory · system · cloudflare
+   http · vrt · security · memory · system · cloudflare · postgres
              │
         application  （用例 + 端口）
              │
@@ -80,6 +80,7 @@ vdoc-server 是 vdoc 的语音会话服务端。它负责：谁能对哪篇文�
 | `@vdoc-server/adapter-vrt` | 适配器 | 接入 vRealTime：模型注册表、每会话一个 Hub、hooks 接到用例、生命周期装饰器、开发用假模型 |
 | `@vdoc-server/adapter-http` | 适配器 | 基于 Web 标准 `Request`/`Response` 的路由、控制器、CORS、problem+json |
 | `@vdoc-server/adapter-memory` | 适配器 | 内存仓储和测试替身 |
+| `@vdoc-server/adapter-postgres` | 适配器 | PostgreSQL 会话仓储（Node 设置 `DATABASE_URL` 时启用） |
 | `@vdoc-server/adapter-system` | 适配器 | 系统时钟、随机 id、JSON 日志、审计日志、组合事件发布 |
 | `@vdoc-server/adapter-cloudflare` | 适配器 | Durable Object 存储仓储（带过期清理） |
 | `@vdoc-server/composition` | 组合 | `createServer()`：各运行时共用的装配 |
@@ -141,7 +142,7 @@ vdoc（浏览器）                 vdoc-server                                 
 | 加一条工具规则（比如工作时间外禁止删除） | 在 `domain/src/tool-governance/rules/` 实现 `ToolRule`，用 `defaultToolPolicy().with(rule)` 组装 |
 | 调整风险分级 | 改 `VDOC_RISK_TABLE`（纯数据） |
 | 用户登录鉴权 | 新写一个 `CallerAuthenticator`（比如校验 JWT），在组合根替换 |
-| 换存储（Postgres、D1） | 实现 `VoiceSessionRepository`，用快照存取 |
+| 换存储（如 D1；Postgres 已有 `adapter-postgres`） | 实现 `VoiceSessionRepository`，用快照存取 |
 | 加审计或指标去向 | 实现 `EventPublisher`，通过 `createServer({ subscribers })` 传入 |
 | 新运行时（Bun、Deno） | 新建 `apps/<runtime>`，复用 `createServer()`；只需桥接 HTTP 和 WebSocket |
 | 新的 Agent 配置 | 在 `config/src/profiles/` 加一个工厂，注册进配置仓储 |

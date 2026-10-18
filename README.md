@@ -72,6 +72,7 @@ const session = await connect(`wss://voice.example.com${created.realtimePath}`, 
 | `VDOC_SERVER_MAX_TOOL_CALLS_PER_TURN` | 每轮最多工具调用，默认 12 |
 | `VDOC_SERVER_LOG_LEVEL` | `debug`、`info`（默认）、`warn`、`error` |
 | `PORT`、`HOST` | 仅 Node，默认 `8787`、`127.0.0.1` |
+| `DATABASE_URL` | 仅 Node，PostgreSQL 连接串（如 `postgres://user:pass@host:5432/vdoc`）；设置后会话存入 Postgres，启动时自动建表；不设则存内存，重启即丢 |
 
 生产环境缺少任何必需项时，服务会在启动时一次性列出所有问题并退出。
 
@@ -120,6 +121,7 @@ packages/
     memory/            内存仓储与测试替身
     system/            时钟、id、日志、审计
     cloudflare/        Durable Object 存储
+    postgres/          PostgreSQL 会话存储
 apps/
   node/                Node 运行时
   worker/              Cloudflare Worker 运行时

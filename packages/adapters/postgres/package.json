@@ -1,0 +1,17 @@
+{
+  "name": "@vdoc-server/adapter-postgres",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "description": "PostgreSQL storage for vdoc-server voice sessions.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@vdoc-server/domain": "0.1.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8"
+  }
+}
