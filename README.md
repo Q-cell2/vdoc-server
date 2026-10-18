@@ -113,7 +113,9 @@ npm run deploy -w @vdoc-server/app-worker
 | 生产分支部署 | `npx wrangler deploy --config apps/worker/wrangler.jsonc` |
 | 非生产分支 / PR 预览 | `npx wrangler preview --config apps/worker/wrangler.jsonc` |
 
-不要在仓库根目录只运行 `npx wrangler preview`：配置文件在 `apps/worker` 下。
+仓库根目录也提供 `wrangler.jsonc`，因此面板默认的 `npx wrangler preview` 可以直接运行。
+根配置与 `apps/worker/wrangler.jsonc` 指向同一入口并保持配置一致，CI 测试会检查两者是否发生漂移。
+上表保留显式路径，方便核对面板使用的配置；修改部署配置时需要同步两份文件。
 `preview` 命令要求配置中包含 `previews`；仅配置生产部署命令不会修复 PR 预览。
 修改面板中的非生产分支命令后，重试 PR 分支的构建，确认日志实际执行了带 `--config` 的命令。
 保存后刷新设置页确认命令保留。如果重试日志仍显示旧命令，应通过 PR 分支的新提交触发新构建，
