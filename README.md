@@ -101,6 +101,35 @@ npm run deploy -w @vdoc-server/app-worker
 
 本地运行 Worker：在 `apps/worker/.dev.vars` 里写入配置后执行 `npm run dev -w @vdoc-server/app-worker`。
 
+### Workers Builds / PR 预览
+
+在 Cloudflare 的 `vdoc-server → Settings → Builds` 中分别设置生产和非生产分支命令。
+项目根目录保持 `/`，Build command 留空：
+
+| 用途 | 命令 |
+| --- | --- |
+| 生产分支部署 | `npx wrangler deploy --config apps/worker/wrangler.jsonc` |
+| 非生产分支 / PR 预览 | `npx wrangler preview --config apps/worker/wrangler.jsonc` |
+
+不要在仓库根目录只运行 `npx wrangler preview`：配置文件在 `apps/worker` 下。
+`preview` 命令要求配置中包含 `previews`；仅配置生产部署命令不会修复 PR 预览。
+修改面板中的非生产分支命令后，重试 PR 分支的构建，确认日志实际执行了带 `--config` 的命令。
+不要将 PR 预览命令改成 `deploy`，以免把未合并的代码发布到生产环境。
+
+`previews` 显式声明变量和 `VOICE_ROOMS` 绑定；本 Worker 的 Durable Object 类没有
+`script_name`，Cloudflare 为每个 Preview 创建独立的命名空间和存储。迁移声明仍保留在顶层。
+预览同样启用生产级配置校验，不会回退到开发凭据或假模型。
+
+生产 Secrets 不会自动成为预览 Secrets。需要实际测试语音接口时，在 **Previews Base**
+配置独立的 `VDOC_SERVER_SIGNING_KEYS`、`VDOC_SERVER_CLIENTS`、`BOSON_API_KEY`，
+不要将密钥写进仓库。Base 密钥变更只影响之后新建的 Preview；已有 Preview 需单独更新。
+`/healthz` 成功只表示 Worker 可访问，不能证明上述密钥和语音接口已验证。
+
+可在本地或 CI 执行 `npx wrangler deploy --dry-run --config apps/worker/wrangler.jsonc`
+检查打包；此命令不会发布，也不能验证 Cloudflare 账号权限和远端预览部署结果。
+参见 Cloudflare 的 [预览配置](https://developers.cloudflare.com/workers/previews/configuration/)
+和 [Durable Object 预览隔离](https://developers.cloudflare.com/workers/previews/resources/#durable-objects)。
+
 ## 开发
 
 ```bash
