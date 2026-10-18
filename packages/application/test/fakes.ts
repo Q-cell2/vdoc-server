@@ -4,7 +4,7 @@ import {
   type AgentProfileRepository, type DocumentId, type DomainEvent, type EndReason, type Principal, type VoiceSessionId,
   type VoiceSessionRepository, type VoiceSessionSnapshot,
 } from '@vdoc-server/domain';
-import { createApplication, type CallerAuthenticator, type CallerCredentials, type Clock, type EventPublisher, type GrantSigner, type IdGenerator, type RealtimeConnections } from '../src';
+import { createApplication, type CommandRunner, type CallerAuthenticator, type CallerCredentials, type Clock, type EventPublisher, type GrantSigner, type IdGenerator, type RealtimeConnections } from '../src';
 
 export class FakeClock implements Clock {
   constructor(public time = 1_000) {}
@@ -74,12 +74,13 @@ export function testProfile(limits: Partial<SessionLimits> = {}): AgentProfile {
   });
 }
 
-export function harness(options: { limits?: Partial<SessionLimits>; concurrency?: 'supersede' | 'reject' } = {}) {
+export function harness(options: { limits?: Partial<SessionLimits>; concurrency?: 'supersede' | 'reject'; runCommand?: CommandRunner } = {}) {
   const clock = new FakeClock();
   const repository = new MapRepository();
   const events = new EventLog();
   const connections = new Connections();
   const app = createApplication({
+    ...(options.runCommand ? { runCommand: options.runCommand } : {}),
     sessions: repository, profiles: new Profiles(testProfile(options.limits)), authenticator: new FakeAuthenticator(), signer: new FakeSigner(),
     clock, ids: new SequentialIds(), events, connections, admission: new DocumentSessionPolicy(options.concurrency ?? 'supersede'),
     toolPolicy: defaultToolPolicy(), riskAssessor: new RiskAssessor(),
