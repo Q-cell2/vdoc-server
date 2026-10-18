@@ -3,7 +3,7 @@ import { InMemoryAgentProfileRepository } from '@vdoc-server/adapter-memory';
 import { ApiKeyAuthenticator, HmacGrantSigner } from '@vdoc-server/adapter-security';
 import { AuditLogPublisher, CompositeEventPublisher, JsonLogger, RandomIdGenerator, systemClock } from '@vdoc-server/adapter-system';
 import { RealtimeHost, type ModelRegistry, type Scheduler } from '@vdoc-server/adapter-vrt';
-import { createApplication, type Application, type Clock, type EventPublisher } from '@vdoc-server/application';
+import { createApplication, type Application, type Clock, type CommandRunner, type EventPublisher } from '@vdoc-server/application';
 import { editingAssistantProfile, type ServerConfig } from '@vdoc-server/config';
 import { DocumentSessionPolicy, ProfileId, RiskAssessor, defaultToolPolicy, type VoiceSessionRepository } from '@vdoc-server/domain';
 
@@ -11,6 +11,7 @@ import { DocumentSessionPolicy, ProfileId, RiskAssessor, defaultToolPolicy, type
 export interface ServerParts {
   readonly config: ServerConfig;
   readonly sessions: VoiceSessionRepository;
+  readonly runCommand?: CommandRunner;
   readonly models: ModelRegistry;
   readonly logger?: JsonLogger;
   readonly clock?: Clock;
@@ -55,6 +56,7 @@ export async function createServer(parts: ServerParts): Promise<Server> {
 
   application = createApplication({
     sessions: parts.sessions,
+    ...(parts.runCommand ? { runCommand: parts.runCommand } : {}),
     profiles,
     authenticator,
     signer,

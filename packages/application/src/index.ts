@@ -1,4 +1,4 @@
-export { createApplication, type Application, type ApplicationDependencies } from './application';
+export { createApplication, type Application, type ApplicationDependencies, type CommandRunner } from './application';
 export { parseDocumentContext, type DocumentContext } from './context/document-context';
 export { appError, fromDomain, type AppError, type AppErrorCode } from './errors';
 export type { CallerAuthenticator, CallerCredentials, Clock, EventPublisher, GrantSigner, IdGenerator, RealtimeConnections } from './ports';

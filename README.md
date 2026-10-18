@@ -78,6 +78,10 @@ const session = await connect(`wss://voice.example.com${created.realtimePath}`, 
 ## 部署到 Cloudflare
 
 每篇文档一个 Durable Object（见 [ADR 0004](docs/adr/0004-one-durable-object-per-document.md)）。
+会话快照保存在 SQLite-backed Durable Object 的持久化存储中；对象或运行时重启后可恢复。
+同一文档的应用命令串行执行，避免并发授权和计数更新互相覆盖。
+Alarm 会结束未使用的过期授权及达到时长限制的会话，并在结束七天后清理快照，
+不需要等待下一次用户请求。详见 [会话存储与生命周期](docs/CLOUDFLARE_SESSION_LIFECYCLE.md)。
 
 ```bash
 npx wrangler secret put VDOC_SERVER_SIGNING_KEYS --cwd apps/worker

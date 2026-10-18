@@ -31,4 +31,12 @@ export class EndVoiceSession {
     session.end(reason, this.deps.clock.now());
     await this.deps.store.commit(session);
   }
+
+  /** Alarm delivery can be late or repeated; re-read the current deadline before ending anything. */
+  async expireIfOverdue(sessionId: string): Promise<void> {
+    const id = VoiceSessionId.parse(sessionId);
+    const session = id.ok ? await this.deps.store.findById(id.value) : undefined;
+    if (session?.expireIfOverdue(this.deps.clock.now())) await this.deps.store.commit(session);
+  }
+
 }

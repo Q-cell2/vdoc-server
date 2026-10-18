@@ -1,4 +1,4 @@
-import { DurableObjectVoiceSessionRepository } from '@vdoc-server/adapter-cloudflare';
+import { DurableObjectVoiceSessionRepository, SerialCommandQueue } from '@vdoc-server/adapter-cloudflare';
 import { closeCodeOf, documentIdOf, isWebSocketUpgrade, json, matchRealtimeRoute, problem } from '@vdoc-server/adapter-http';
 import { createModelRegistry, fetchSocket, type WebSocketLike } from '@vdoc-server/adapter-vrt';
 import { createServer, type Server } from '@vdoc-server/composition';
@@ -24,6 +24,22 @@ export default {
 /** Composition root per document: storage is this object's, everything else is shared code. */
 export class DocumentVoiceRoom extends DurableObject<Env> {
   #server: Promise<Server> | undefined;
+  readonly #commands = new SerialCommandQueue();
+  readonly #sessions: DurableObjectVoiceSessionRepository;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.#sessions = new DurableObjectVoiceSessionRepository(ctx.storage);
+    // Only storage initialization belongs in blockConcurrencyWhile; commands may perform external I/O.
+    void ctx.blockConcurrencyWhile(() => this.#sessions.ensureAlarm());
+  }
+
+  override async alarm(): Promise<void> {
+    const server = await this.#start();
+    const overdue = await this.#commands.run(() => this.#sessions.findOverdue());
+    for (const id of overdue) await server.application.endVoiceSession.expireIfOverdue(id);
+    await this.#commands.run(() => this.#sessions.pruneAndSchedule());
+  }
 
   override async fetch(request: Request): Promise<Response> {
     let server: Server;
@@ -56,7 +72,8 @@ export class DocumentVoiceRoom extends DurableObject<Env> {
       if (!config.ok) throw new Error(config.errors.join('; '));
       return createServer({
         config: config.value,
-        sessions: new DurableObjectVoiceSessionRepository(this.ctx.storage),
+        sessions: this.#sessions,
+        runCommand: (command) => this.#commands.run(command),
         models: createModelRegistry({
           bosonApiKey: config.value.providerKeys.boson,
           bosonSocket: fetchSocket(),

@@ -12,8 +12,12 @@ import { ResolveRealtimeRoute } from './use-cases/resolve-realtime-route';
 import { ReviewToolCall } from './use-cases/review-tool-call';
 import { VoiceSessionStore } from './voice-session-store';
 
+export type CommandRunner = <T>(command: () => Promise<T>) => Promise<T>;
+
 /** Everything the use cases need; supplied by a composition root. */
 export interface ApplicationDependencies {
+  /** Runtime scope decides which commands must run sequentially (one document on Workers). */
+  readonly runCommand?: CommandRunner;
   readonly sessions: VoiceSessionRepository;
   readonly profiles: AgentProfileRepository;
   readonly authenticator: CallerAuthenticator;
@@ -29,23 +33,23 @@ export interface ApplicationDependencies {
 
 /** The application's public surface: one object per use case. */
 export interface Application {
-  readonly grantVoiceSession: GrantVoiceSession;
-  readonly renewSessionGrant: RenewSessionGrant;
-  readonly getVoiceSession: GetVoiceSession;
-  readonly endVoiceSession: EndVoiceSession;
-  readonly resolveRealtimeRoute: ResolveRealtimeRoute;
-  readonly authorizeRealtimeConnection: AuthorizeRealtimeConnection;
-  readonly configureRealtimeSession: ConfigureRealtimeSession;
-  readonly reviewToolCall: ReviewToolCall;
-  readonly recordToolResult: RecordToolResult;
-  readonly completeTurn: CompleteTurn;
+  readonly grantVoiceSession: Pick<GrantVoiceSession, keyof GrantVoiceSession>;
+  readonly renewSessionGrant: Pick<RenewSessionGrant, keyof RenewSessionGrant>;
+  readonly getVoiceSession: Pick<GetVoiceSession, keyof GetVoiceSession>;
+  readonly endVoiceSession: Pick<EndVoiceSession, keyof EndVoiceSession>;
+  readonly resolveRealtimeRoute: Pick<ResolveRealtimeRoute, keyof ResolveRealtimeRoute>;
+  readonly authorizeRealtimeConnection: Pick<AuthorizeRealtimeConnection, keyof AuthorizeRealtimeConnection>;
+  readonly configureRealtimeSession: Pick<ConfigureRealtimeSession, keyof ConfigureRealtimeSession>;
+  readonly reviewToolCall: Pick<ReviewToolCall, keyof ReviewToolCall>;
+  readonly recordToolResult: Pick<RecordToolResult, keyof RecordToolResult>;
+  readonly completeTurn: Pick<CompleteTurn, keyof CompleteTurn>;
 }
 
 /** Factory: wires use cases to their ports. Composition roots call this once. */
 export function createApplication(deps: ApplicationDependencies): Application {
   const store = new VoiceSessionStore(deps.sessions, deps.events, deps.connections);
   const { profiles, authenticator, signer, clock, ids, admission } = deps;
-  return {
+  const app: Application = {
     grantVoiceSession: new GrantVoiceSession({ store, profiles, authenticator, signer, clock, ids, admission }),
     renewSessionGrant: new RenewSessionGrant({ store, authenticator, signer, clock }),
     getVoiceSession: new GetVoiceSession({ store, authenticator, clock }),
@@ -56,5 +60,25 @@ export function createApplication(deps: ApplicationDependencies): Application {
     reviewToolCall: new ReviewToolCall({ store, profiles, policy: deps.toolPolicy, assessor: deps.riskAssessor, clock }),
     recordToolResult: new RecordToolResult({ store, clock }),
     completeTurn: new CompleteTurn({ store, clock }),
+  };
+  if (!deps.runCommand) return app;
+  const run = deps.runCommand;
+  const wrap = <Args extends unknown[], Value>(fn: (...args: Args) => Promise<Value>) =>
+    (...args: Args): Promise<Value> => run(() => fn(...args));
+  return {
+    grantVoiceSession: { execute: wrap(app.grantVoiceSession.execute.bind(app.grantVoiceSession)) },
+    renewSessionGrant: { execute: wrap(app.renewSessionGrant.execute.bind(app.renewSessionGrant)) },
+    getVoiceSession: { execute: wrap(app.getVoiceSession.execute.bind(app.getVoiceSession)) },
+    endVoiceSession: {
+      byClient: wrap(app.endVoiceSession.byClient.bind(app.endVoiceSession)),
+      bySystem: wrap(app.endVoiceSession.bySystem.bind(app.endVoiceSession)),
+      expireIfOverdue: wrap(app.endVoiceSession.expireIfOverdue.bind(app.endVoiceSession)),
+    },
+    resolveRealtimeRoute: { execute: wrap(app.resolveRealtimeRoute.execute.bind(app.resolveRealtimeRoute)) },
+    authorizeRealtimeConnection: { execute: wrap(app.authorizeRealtimeConnection.execute.bind(app.authorizeRealtimeConnection)) },
+    configureRealtimeSession: { execute: wrap(app.configureRealtimeSession.execute.bind(app.configureRealtimeSession)) },
+    reviewToolCall: { execute: wrap(app.reviewToolCall.execute.bind(app.reviewToolCall)) },
+    recordToolResult: { execute: wrap(app.recordToolResult.execute.bind(app.recordToolResult)) },
+    completeTurn: { execute: wrap(app.completeTurn.execute.bind(app.completeTurn)) },
   };
 }
