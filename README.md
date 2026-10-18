@@ -104,6 +104,8 @@ npm run deploy -w @vdoc-server/app-worker
 ### Workers Builds / PR 预览
 
 在 Cloudflare 的 `vdoc-server → Settings → Builds` 中分别设置生产和非生产分支命令。
+生产命令位于 **Production → Deploy command**，预览命令位于
+**Previews Base → Preview command**；不要将预览命令填入左侧的 Build command。
 项目根目录保持 `/`，Build command 留空：
 
 | 用途 | 命令 |
@@ -114,6 +116,8 @@ npm run deploy -w @vdoc-server/app-worker
 不要在仓库根目录只运行 `npx wrangler preview`：配置文件在 `apps/worker` 下。
 `preview` 命令要求配置中包含 `previews`；仅配置生产部署命令不会修复 PR 预览。
 修改面板中的非生产分支命令后，重试 PR 分支的构建，确认日志实际执行了带 `--config` 的命令。
+保存后刷新设置页确认命令保留。如果重试日志仍显示旧命令，应通过 PR 分支的新提交触发新构建，
+并再次核对日志中的 `Executing user deploy command`。
 不要将 PR 预览命令改成 `deploy`，以免把未合并的代码发布到生产环境。
 
 `previews` 显式声明变量和 `VOICE_ROOMS` 绑定；本 Worker 的 Durable Object 类没有
