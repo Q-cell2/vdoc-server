@@ -57,6 +57,8 @@ const session = await connect(`wss://voice.example.com${created.realtimePath}`, 
 
 ## 配置
 
+客户端可用 `session.setContext({ documentId, title, language, vocabulary })` 更新语音会话的文档上下文；重连时的 `hello.context` 也会刷新模型配置。更新沿用初始上下文的清洗与长度限制，不能切换文档，已结束会话拒绝更新。支持动态指令的模型通过公开的 `RealtimeSession.update()` 接收指令与转写提示；不支持的模型保留初始配置。上下文属于该文档的这一次语音会话，覆盖其所有实时连接；慢模型更新期间只保留最新的待处理快照。
+
 | 变量 | 说明 |
 |---|---|
 | `VDOC_SERVER_ENV` | `development`（默认）、`test`、`production` |

@@ -2,10 +2,11 @@ import { VoiceSessionId, err, ok, type AgentProfileRepository, type ModelChoice,
 import { parseDocumentContext } from '../context/document-context';
 import { appError, type AppError } from '../errors';
 import type { VoiceSessionStore } from '../voice-session-store';
+import type { Clock } from '../ports';
 
 export interface ConfigureRealtimeSessionInput {
   readonly sessionId: string;
-  /** `hello.context` from the app: title, language, recognition vocabulary. Untrusted. */
+  /** Initial, resumed or updated app context: title, language, vocabulary. Untrusted. */
   readonly context: unknown;
 }
 
@@ -21,12 +22,15 @@ export interface AgentSessionSettings {
 
 /** Query: per-session agent settings from the profile and the document context. */
 export class ConfigureRealtimeSession {
-  constructor(private readonly deps: { store: VoiceSessionStore; profiles: AgentProfileRepository }) {}
+  constructor(private readonly deps: { store: VoiceSessionStore; profiles: AgentProfileRepository; clock: Clock }) {}
 
   async execute(input: ConfigureRealtimeSessionInput): Promise<Result<AgentSessionSettings, AppError>> {
     const id = VoiceSessionId.parse(input.sessionId);
     const session = id.ok ? await this.deps.store.findById(id.value) : undefined;
     if (!session) return err(appError('NOT_FOUND', 'No such voice session.'));
+    if (session.status !== 'active' || !session.isOpenAt(this.deps.clock.now())) {
+      return err(appError('SESSION_CLOSED', 'This voice session is not active.'));
+    }
     const profile = await this.deps.profiles.get(session.profileId);
     if (!profile) return err(appError('NOT_FOUND', 'The session’s agent profile no longer exists.'));
     const context = parseDocumentContext(input.context, profile);

@@ -4,6 +4,7 @@ import { defineAgent, type AgentDefinition, type SessionConfig } from '@vrealtim
 import { Hub, type Connection, type WebSocketLike } from '@vrealtime/server';
 import { withLifecycle } from './lifecycle-model';
 import type { ModelRegistry } from './model-registry';
+import { ContextUpdates } from './context-updates';
 
 /** The use cases the realtime edge drives. */
 export type RealtimeHandlers = Pick<Application,
@@ -54,7 +55,7 @@ export class RealtimeRoom {
   #everOpened = false;
   #disposed = false;
 
-  constructor(readonly sessionId: string, readonly hub: Hub, private readonly onEmpty: (room: RealtimeRoom) => void) {}
+  constructor(readonly sessionId: string, readonly hub: Hub, private readonly onEmpty: (room: RealtimeRoom) => void, private readonly context: ContextUpdates) {}
 
   /** Event-style sockets (`ws`, browsers, Deno, Workers). */
   attach(socket: WebSocketLike, headers?: Headers): Connection {
@@ -76,6 +77,7 @@ export class RealtimeRoom {
 
   /** @internal */ markDisposed(): void {
     this.#disposed = true;
+    this.context.close();
   }
 }
 
@@ -131,9 +133,13 @@ export class RealtimeHost implements RealtimeConnections {
     const { sessionId, documentId } = route;
     const handlers = this.options.handlers;
     let room!: RealtimeRoom;
+    const context = new ContextUpdates(
+      (value) => handlers().configureRealtimeSession.execute({ sessionId, context: value }),
+      (code) => this.#log('warn', 'context update refused', { sessionId, code }),
+    );
     const model = withLifecycle(this.options.models.create(choice), {
-      opened: () => room.modelOpened(),
-      closed: () => room.modelClosed(),
+      opened: (session) => { context.add(session); room.modelOpened(); },
+      closed: (session) => { context.remove(session); room.modelClosed(); },
     });
     const agent: AgentDefinition = defineAgent({
       model,
@@ -173,10 +179,11 @@ export class RealtimeHost implements RealtimeConnections {
         if (!settings.ok) throw new Error(settings.error.message);
         return toSessionConfig(settings.value);
       },
+      onContext: (value, session) => { if (!session.closed) context.schedule(value); },
       ...(this.options.resumeWindowMs !== undefined ? { resumeWindowMs: this.options.resumeWindowMs } : {}),
       ...(this.options.heartbeatTimeoutMs !== undefined ? { heartbeatTimeoutMs: this.options.heartbeatTimeoutMs } : {}),
     });
-    room = new RealtimeRoom(sessionId, hub, (empty) => this.#onRoomEmpty(empty));
+    room = new RealtimeRoom(sessionId, hub, (empty) => this.#onRoomEmpty(empty), context);
     this.#rooms.set(sessionId, room);
     this.#scheduler.set(() => {
       if (!room.everOpened && !room.disposed) {
