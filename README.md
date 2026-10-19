@@ -142,7 +142,14 @@ npm run deploy -w @vdoc-server/app-worker
 npm run check
 ```
 
-依次执行类型检查（Node 与 Workers 两套）、架构依赖检查和全部测试。
+依次执行类型检查（Node 与 Workers 两套）、架构依赖检查及单元、Node E2E、Durable Object 存储测试。
+
+```bash
+npm test -w @vdoc-server/app-worker
+```
+
+单独启动真实 workerd，使用临时配置、存储和假模型验证 Worker 的授权续签、WebSocket 升级、
+客户端工具调用及审计、结束后断连与 `4410` 拒绝重连。无需真实密钥；CI 的独立 `worker` job 执行此命令。
 
 ## 包结构
 
