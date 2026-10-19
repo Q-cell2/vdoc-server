@@ -5,7 +5,7 @@ Node 与 Cloudflare 都通过事件订阅者输出 JSON 指标行。日志级别
 | metric | 字段 | 含义 |
 |---|---|---|
 | `turn.completed` | `toolCalls` | 本轮经过策略审查的调用数，包括被拒绝或要求确认的调用 |
-| `turn.completed` | `modelToolCalls` | vRealTime 计数的已执行调用数，与审查数分别保存 |
+| `turn.completed` | `modelToolCalls` | vRealTime 在当前 epoch 接收的完整调用数，在策略审查和执行之前计数，包含随后被拒绝或取消的调用 |
 | `turn.completed` | `timeToFirstAudioMs` | 用户语音结束至第一段模型音频，存在时才记录 |
 | `turn.completed` | `timeToFirstToolCallMs` | 用户语音结束至首次工具调用，存在时才记录 |
 | `turn.completed` | `interruptLatencyMs` | vRealTime 收到中断至本地关闭播放/执行闸门，不是远端取消耗时 |

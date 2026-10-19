@@ -35,7 +35,7 @@ export interface TurnMetrics {
   readonly timeToFirstAudioMs?: number;
   readonly timeToFirstToolCallMs?: number;
   readonly interruptLatencyMs?: number;
-  /** Calls executed by the realtime runtime, distinct from calls reviewed by policy. */
+  /** Complete calls admitted to the SDK's current epoch, counted before policy and execution. */
   readonly modelToolCalls?: number;
 }
 export interface TurnCompleted extends DomainEvent<'TurnCompleted'>, TurnMetrics {
