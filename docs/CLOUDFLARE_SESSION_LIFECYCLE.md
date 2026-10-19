@@ -8,6 +8,9 @@
 
 - 保留现有 `DocumentVoiceRoom` 类、`VOICE_ROOMS` 绑定和 `v1` SQLite migration。
   不需要删除/重建 Durable Objects，也不需要增加 Postgres 连接。
+- `v2` migration 增加按 principal 隔离的 `PrincipalQuotaRoom` 和 `PRINCIPAL_QUOTAS`
+  绑定，负责跨文档配额。结束提交释放名额；租约和频率窗口可独立通过 alarm 清理，
+  见 [跨文档配额](PRINCIPAL_QUOTAS.md)。
 - 快照内容沿用原有 `voice-session:` 键格式；包括文档、调用者、会话状态、授权截止
   时间、使用量和待确认操作。构造函数为旧快照补建缺失的 alarm。
 - 存储事务原子提交快照和 alarm。写入 alarm 失败时不能留下没有唤醒安排的快照。

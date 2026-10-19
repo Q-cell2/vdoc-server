@@ -32,3 +32,18 @@ jobs:
         working-directory: apps/worker
       - name: Bundle from repository root (Workers Builds default discovery, no deploy)
         run: npx wrangler deploy --dry-run --outdir /tmp/vdoc-root-bundle
+
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Worker WebSocket end to end (real workerd, fake model)
+        run: npm test -w @vdoc-server/app-worker
+        env:
+          WRANGLER_SEND_METRICS: 'false'

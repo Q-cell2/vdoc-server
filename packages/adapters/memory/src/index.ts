@@ -65,3 +65,4 @@ export class RecordingRealtimeConnections implements RealtimeConnections {
     this.closed.push({ sessionId, reason });
   }
 }
+export { InMemoryPrincipalQuotaStore } from './principal-quota';

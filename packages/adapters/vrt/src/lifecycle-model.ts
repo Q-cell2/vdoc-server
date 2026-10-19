@@ -1,8 +1,8 @@
 import type { RealtimeModel, RealtimeSession } from '@vrealtime/core';
 
 export interface ModelLifecycle {
-  opened(): void;
-  closed(): void;
+  opened(session: RealtimeSession): void;
+  closed(session: RealtimeSession): void;
 }
 
 /**
@@ -17,7 +17,7 @@ export function withLifecycle(model: RealtimeModel, lifecycle: ModelLifecycle): 
     capabilities: model.capabilities,
     async connect(config, options) {
       const session = await model.connect(config, options);
-      lifecycle.opened();
+      lifecycle.opened(session);
       let closed = false;
       const close = session.close.bind(session);
       return new Proxy(session, {
@@ -29,7 +29,7 @@ export function withLifecycle(model: RealtimeModel, lifecycle: ModelLifecycle): 
               } finally {
                 if (!closed) {
                   closed = true;
-                  lifecycle.closed();
+                  lifecycle.closed(session);
                 }
               }
             };

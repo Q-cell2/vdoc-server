@@ -9,7 +9,7 @@ import type { RiskAssessor } from '../tool-governance/risk';
 import { fingerprint, type ToolCall } from '../tool-governance/tool-call';
 import type { ToolDecision } from '../tool-governance/tool-decision';
 import type { ToolPolicy } from '../tool-governance/tool-policy';
-import type { EndReason, VoiceSessionEvent } from './events';
+import type { EndReason, TurnMetrics, VoiceSessionEvent } from './events';
 import type { SessionLimits } from './session-limits';
 import { Usage } from './usage';
 
@@ -145,11 +145,11 @@ export class VoiceSession extends AggregateRoot<VoiceSessionEvent> {
   }
 
   /** Counts the turn and ends the session if it used up its turns. Returns the end reason when it ended. */
-  completeTurn(turnId: TurnId, now: number): EndReason | undefined {
+  completeTurn(turnId: TurnId, now: number, metrics: TurnMetrics = {}): EndReason | undefined {
     if (this.state.status === 'ended') return undefined;
     const toolCalls = Usage.callsSoFar(this.state.usage, turnId);
     this.state = { ...this.state, usage: Usage.withCompletedTurn(this.state.usage) };
-    this.record({ type: 'TurnCompleted', aggregateId: this.state.id, occurredAt: now, turnId, toolCalls });
+    this.record({ ...metrics, type: 'TurnCompleted', aggregateId: this.state.id, occurredAt: now, turnId, toolCalls });
     if (this.state.usage.turns >= this.state.limits.maxTurns) {
       this.end('limit-turns', now);
       return 'limit-turns';

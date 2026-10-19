@@ -5,6 +5,13 @@ import { VDOC_TOOLS, editingAssistantProfile, loadConfig } from '../src';
 const KEY = 'k'.repeat(40);
 
 describe('loadConfig', () => {
+  it('validates configurable per-principal quotas', () => {
+    expect(loadConfig({})).toMatchObject({ ok: true, value: { quotas: { maxConcurrentSessions: 3, maxSessionsPerHour: 60 } } });
+    expect(loadConfig({ VDOC_SERVER_MAX_CONCURRENT_SESSIONS_PER_PRINCIPAL: '2', VDOC_SERVER_MAX_SESSIONS_PER_HOUR: '10' })).toMatchObject({ ok: true, value: { quotas: { maxConcurrentSessions: 2, maxSessionsPerHour: 10 } } });
+    for (const invalid of ['0', '-1', '1.5', 'NaN', '9007199254740992']) {
+      expect(loadConfig({ VDOC_SERVER_MAX_SESSIONS_PER_HOUR: invalid }).ok).toBe(false);
+    }
+  });
   it('fills safe throwaway defaults in development and says so', () => {
     const config = loadConfig({});
     expect(config.ok).toBe(true);

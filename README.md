@@ -57,7 +57,13 @@ const session = await connect(`wss://voice.example.com${created.realtimePath}`, 
 
 实时连接被拒绝时的关闭码：`4401` 授权无效，`4404` 会话不存在，`4410` 会话已结束。
 
+跨文档配额超限返回 `429`，`code` 为 `QUOTA_EXCEEDED`，`Retry-After` 是建议等待的秒数，
+浏览器可通过 CORS 读取此响应头。配额按鉴权后的 principal ID 计算；当前 API key 对应一个 client
+principal，共用同一 client key 的用户也共用配额。按登录用户计数需先接入用户鉴权（#4）。
+
 ## 配置
+
+客户端可用 `session.setContext({ documentId, title, language, vocabulary })` 更新语音会话的文档上下文；重连时的 `hello.context` 也会刷新模型配置。更新沿用初始上下文的清洗与长度限制，不能切换文档，已结束会话拒绝更新。支持动态指令的模型通过公开的 `RealtimeSession.update()` 接收指令与转写提示；不支持的模型保留初始配置。上下文属于该文档的这一次语音会话，覆盖其所有实时连接；慢模型更新期间只保留最新的待处理快照。
 
 | 变量 | 说明 |
 |---|---|
@@ -68,6 +74,8 @@ const session = await connect(`wss://voice.example.com${created.realtimePath}`, 
 | `VDOC_SERVER_MODEL` | `boson`、`openai`、`fake`，可写成 `boson:<model>` |
 | `BOSON_API_KEY` / `OPENAI_API_KEY` | 模型密钥 |
 | `VDOC_SERVER_CONCURRENCY` | 同一文档已有会话时：`supersede`（默认，顶替）或 `reject` |
+| `VDOC_SERVER_MAX_CONCURRENT_SESSIONS_PER_PRINCIPAL` | 同一 principal 跨所有文档最多未结束会话，默认 3（含已授权未连接的会话） |
+| `VDOC_SERVER_MAX_SESSIONS_PER_HOUR` | 同一 principal 在滚动一小时内最多创建的会话，默认 60；续签、重连不重复扣次 |
 | `VDOC_SERVER_GRANT_TTL_SECONDS` | 授权有效期，默认 60 |
 | `VDOC_SERVER_MAX_SESSION_MINUTES` | 会话最长时长，默认 30 |
 | `VDOC_SERVER_MAX_TURNS` | 最大轮次，默认 300 |
@@ -84,6 +92,8 @@ const session = await connect(`wss://voice.example.com${created.realtimePath}`, 
 同一文档的应用命令串行执行，避免并发授权和计数更新互相覆盖。
 Alarm 会结束未使用的过期授权及达到时长限制的会话，并在结束七天后清理快照，
 不需要等待下一次用户请求。详见 [会话存储与生命周期](docs/CLOUDFLARE_SESSION_LIFECYCLE.md)。
+每个 principal 另有一个 `PrincipalQuotaRoom`，原子维护跨文档配额；两个 Wrangler 配置都包含
+`PRINCIPAL_QUOTAS` 绑定和新增的 `v2` SQLite migration。见 [跨文档配额](docs/PRINCIPAL_QUOTAS.md)。
 
 ```bash
 npx wrangler secret put VDOC_SERVER_SIGNING_KEYS --cwd apps/worker
@@ -144,7 +154,16 @@ npm run deploy -w @vdoc-server/app-worker
 npm run check
 ```
 
-依次执行类型检查（Node 与 Workers 两套）、架构依赖检查和全部测试。
+依次执行类型检查（Node 与 Workers 两套）、架构依赖检查及单元、Node E2E、Durable Object 存储测试。
+
+```bash
+npm test -w @vdoc-server/app-worker
+```
+
+单独启动真实 workerd，使用临时配置、存储和假模型验证 Worker 的授权续签、WebSocket 升级、
+客户端工具调用及审计、结束后断连与 `4410` 拒绝重连。无需真实密钥；CI 的独立 `worker` job 执行此命令。
+
+轮次延迟、工具审查与执行结果会输出为带 `metrics: true` 的 JSON 指标日志，字段与采集边界见 [语音指标](docs/METRICS.md)。
 
 ## 包结构
 

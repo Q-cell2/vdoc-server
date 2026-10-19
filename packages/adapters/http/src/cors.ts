@@ -15,7 +15,7 @@ export class CorsPolicy {
   /** Headers to add to a response for this request's origin. */
   headersFor(origin: string | null): Record<string, string> {
     if (!this.allows(origin)) return {};
-    return { 'access-control-allow-origin': origin!, vary: 'Origin', 'access-control-expose-headers': 'location' };
+    return { 'access-control-allow-origin': origin!, vary: 'Origin', 'access-control-expose-headers': 'location, retry-after' };
   }
 
   preflight(origin: string | null): Response {

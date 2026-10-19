@@ -22,7 +22,7 @@ let close: () => Promise<void>;
 const events = new RecordingEventPublisher();
 
 beforeAll(async () => {
-  const config = loadConfig({ VDOC_SERVER_ENV: 'test', VDOC_SERVER_CLIENTS: `vdoc-web:${CLIENT_KEY}`, VDOC_SERVER_MODEL: 'fake', VDOC_SERVER_LOG_LEVEL: 'error' });
+  const config = loadConfig({ VDOC_SERVER_ENV: 'test', VDOC_SERVER_CLIENTS: `vdoc-web:${CLIENT_KEY}`, VDOC_SERVER_MODEL: 'fake', VDOC_SERVER_LOG_LEVEL: 'error', VDOC_SERVER_MAX_CONCURRENT_SESSIONS_PER_PRINCIPAL: '100' });
   if (!config.ok) throw new Error(config.errors.join('; '));
   const server = await createNodeServer(config.value, { subscribers: [events], fakeResponder: respond, realtime: { resumeWindowMs: 150 } });
   const running = await startNodeServer(server, { port: 0 });
@@ -100,6 +100,8 @@ describe('realtime voice session', () => {
     session.sendText('please read it');
     await until(() => calls.includes('read_document'));
     await until(() => events.types().includes('ToolCallCompleted'));
+    await until(() => events.events.some((event) => event.type === 'TurnCompleted' && event.aggregateId === granted.sessionId));
+    expect(events.events.find((event) => event.type === 'TurnCompleted' && event.aggregateId === granted.sessionId)).toMatchObject({ modelToolCalls: 1 });
     expect(events.events.find((e) => e.type === 'ToolCallReviewed')).toMatchObject({ tool: 'read_document', decision: 'allow' });
     expect(await status('doc-d', granted.sessionId)).toMatchObject({ status: 'active' });
     await session.close();

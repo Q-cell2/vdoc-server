@@ -14,6 +14,7 @@ it('keeps root command discovery equivalent to the explicit Worker configuration
   expect(root).toEqual(normalized('apps/worker/wrangler.jsonc'));
   expect(root.previews.durable_objects.bindings).toEqual([
     { name: 'VOICE_ROOMS', class_name: 'DocumentVoiceRoom' },
+    { name: 'PRINCIPAL_QUOTAS', class_name: 'PrincipalQuotaRoom' },
   ]);
   expect(root.previews.vars.VDOC_SERVER_ENV).toBe('production');
 });

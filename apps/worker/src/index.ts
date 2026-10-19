@@ -1,12 +1,13 @@
-import { DurableObjectAuditPublisher, DurableObjectVoiceSessionRepository, SerialCommandQueue, type AuditPage } from '@vdoc-server/adapter-cloudflare';
+import { DurableObjectAuditPublisher, DurableObjectVoiceSessionRepository, DurablePrincipalQuotaStore, PrincipalQuotaBinding, SerialCommandQueue, type AuditPage } from '@vdoc-server/adapter-cloudflare';
 import { closeCodeOf, documentIdOf, isWebSocketUpgrade, json, matchRealtimeRoute, problem } from '@vdoc-server/adapter-http';
 import { createModelRegistry, fetchSocket, type WebSocketLike } from '@vdoc-server/adapter-vrt';
 import { createServer, type Server } from '@vdoc-server/composition';
-import { loadConfig, type Env as ConfigEnv } from '@vdoc-server/config';
+import { loadConfig, parsePrincipalQuotaLimits, type Env as ConfigEnv } from '@vdoc-server/config';
 import { DurableObject } from 'cloudflare:workers';
 
 export interface Env {
   readonly VOICE_ROOMS: DurableObjectNamespace<DocumentVoiceRoom>;
+  readonly PRINCIPAL_QUOTAS: DurableObjectNamespace<PrincipalQuotaRoom>;
   readonly [variable: string]: unknown;
 }
 
@@ -81,6 +82,7 @@ export class DocumentVoiceRoom extends DurableObject<Env> {
         config: config.value,
         sessions: this.#sessions,
         subscribers: [this.#audit],
+        quotas: new PrincipalQuotaBinding(this.env.PRINCIPAL_QUOTAS),
         runCommand: (command) => this.#commands.run(command),
         models: createModelRegistry({
           bosonApiKey: config.value.providerKeys.boson,
@@ -92,4 +94,22 @@ export class DocumentVoiceRoom extends DurableObject<Env> {
     })();
     return this.#server;
   }
+}
+
+/** One global namespace object per authenticated principal, shared by every document. */
+export class PrincipalQuotaRoom extends DurableObject<Env> {
+  readonly #quotas: DurablePrincipalQuotaStore;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    const variables: ConfigEnv = Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+    const errors: string[] = [];
+    const limits = parsePrincipalQuotaLimits(variables, errors);
+    if (errors.length) throw new Error(errors.join('; '));
+    this.#quotas = new DurablePrincipalQuotaStore(ctx.storage, limits);
+  }
+
+  reserve(input: Parameters<DurablePrincipalQuotaStore['reserve']>[0]) { return this.#quotas.reserve(input); }
+  release(principalId: string, sessionId: string) { return this.#quotas.release(principalId, sessionId); }
+  override alarm() { return this.#quotas.prune(); }
 }

@@ -15,11 +15,22 @@ const headers = { authorization: `Bearer ${clientKey}`, 'content-type': 'applica
 // Only this test bundle exposes direct storage inspection/seeding. The production
 // Worker has no test routes. Inherit its real constructor/alarm and internal audit RPC.
 const harness = `
-import worker, { DocumentVoiceRoom } from './apps/worker/src/index.ts';
+import worker, { DocumentVoiceRoom, PrincipalQuotaRoom } from './apps/worker/src/index.ts';
+export class TestQuotaRoom extends PrincipalQuotaRoom {
+  async fetch(request) {
+    if (request.method === 'POST') {
+      await this.ctx.storage.put('quota', await request.json());
+      await this.ctx.storage.setAlarm(Date.now());
+      return new Response(null, { status: 204 });
+    }
+    return Response.json({ state: await this.ctx.storage.get('quota'), alarm: await this.ctx.storage.getAlarm() });
+  }
+}
 export default worker;
 export class TestRoom extends DocumentVoiceRoom {
   async fetch(request) {
     const url = new URL(request.url);
+    if (url.searchParams.has('__quota')) return this.env.PRINCIPAL_QUOTAS.get(this.env.PRINCIPAL_QUOTAS.idFromName(url.searchParams.get('__quota'))).fetch(request);
     if (url.searchParams.has('__inspect')) return Response.json({ snapshot: await this.ctx.storage.get('voice-session:' + url.searchParams.get('__inspect')), alarm: await this.ctx.storage.getAlarm() });
     if (url.searchParams.has('__audit')) return Response.json(this.auditEvents(url.searchParams.get('__audit')));
     if (url.searchParams.has('__seed')) { const snapshot = await request.json(); await this.ctx.storage.put('voice-session:' + snapshot.id, snapshot); await this.ctx.storage.setAlarm(Date.now()); return new Response(null, { status: 204 }); }
@@ -42,10 +53,10 @@ beforeAll(async () => {
   const bundled = await build({ stdin: { contents: harness, resolveDir: process.cwd(), loader: 'ts' }, bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022', external: ['cloudflare:workers'] });
   persist = await mkdtemp(join(tmpdir(), 'vdoc-do-runtime-'));
   options = { resourcePersistencePath: persist, name: 'voice-runtime-test', modules: true, script: bundled.outputFiles[0]!.text,
-    compatibilityDate: '2026-09-01', durableObjects: { VOICE_ROOMS: { className: 'TestRoom', useSQLite: true } },
+    compatibilityDate: '2026-09-01', durableObjects: { VOICE_ROOMS: { className: 'TestRoom', useSQLite: true }, PRINCIPAL_QUOTAS: { className: 'TestQuotaRoom', useSQLite: true } },
     bindings: { VDOC_SERVER_ENV: 'test', VDOC_SERVER_MODEL: 'fake', VDOC_SERVER_LOG_LEVEL: 'error',
       VDOC_SERVER_SIGNING_KEYS: 'test:runtime-only-signing-secret-at-least-32-characters',
-      VDOC_SERVER_CLIENTS: `web:${clientKey}`, VDOC_SERVER_GRANT_TTL_SECONDS: '60', VDOC_SERVER_CONCURRENCY: 'reject' },
+      VDOC_SERVER_CLIENTS: `web:${clientKey},quota:runtime-quota-key-not-for-production`, VDOC_SERVER_GRANT_TTL_SECONDS: '60', VDOC_SERVER_CONCURRENCY: 'reject' },
   };
   mf = new Miniflare(convertV4MiniflareOptions(options));
   await mf.ready;
@@ -53,6 +64,33 @@ beforeAll(async () => {
 afterAll(async () => { await mf?.dispose(); if (persist) await rm(persist, { recursive: true, force: true }); });
 
 describe('SQLite Durable Objects in real workerd', () => {
+  it('reclaims expired principal leases and hourly records through the quota alarm', async () => {
+    const url = 'https://voice.test/v1/documents/quota-alarm/voice-sessions?__quota=alarm-only';
+    const response = await mf.dispatchFetch(url, { method: 'POST', body: JSON.stringify({
+      slots: [{ sessionId: 'abandoned', expiresAt: Date.now() - 1000, supersedes: [] }],
+      starts: [{ sessionId: 'abandoned', at: Date.now() - 3_601_000 }],
+    }) });
+    expect(response.status).toBe(204);
+    await expect.poll(async () => (await (await mf.dispatchFetch(url)).json() as { state?: unknown; alarm: number | null }), { timeout: 5000 }).toEqual({ alarm: null });
+  });
+  it('keeps principal quotas atomic across document DOs and durable across runtime restart', async () => {
+    const quotaHeaders = { authorization: 'Bearer runtime-quota-key-not-for-production' };
+    const post = (doc: string) => mf.dispatchFetch(`https://voice.test/v1/documents/${doc}/voice-sessions`, { method: 'POST', headers: quotaHeaders });
+    const responses = await Promise.all(Array.from({ length: 8 }, async (_, index) => ({ doc: `principal-${index}`, response: await post(`principal-${index}`) })));
+    const admitted: { doc: string; sessionId: string }[] = [];
+    for (const { doc, response } of responses) {
+      if (response.status === 201) admitted.push({ doc, ...(await response.json() as { sessionId: string }) });
+      else { expect(response.status).toBe(429); await response.text(); }
+    }
+    expect(admitted).toHaveLength(3);
+    await mf.dispose(); mf = new Miniflare(convertV4MiniflareOptions(options)); await mf.ready;
+    const blocked = await post('principal-after-restart');
+    expect(blocked.status).toBe(429); await blocked.text();
+    const first = admitted[0]!;
+    expect((await mf.dispatchFetch(`https://voice.test/v1/documents/${first.doc}/voice-sessions/${first.sessionId}`, { method: 'DELETE', headers: quotaHeaders })).status).toBe(204);
+    const released = await post('principal-released');
+    expect(released.status).toBe(201); await released.text();
+  });
   it('serializes concurrent admissions and preserves the grant across a runtime restart', async () => {
     const responses = await Promise.all(Array.from({ length: 6 }, () => grant('concurrent')));
     expect(responses.filter(r => r.status === 201)).toHaveLength(1);
