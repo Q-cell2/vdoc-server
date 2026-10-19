@@ -50,6 +50,7 @@ export class VoiceSessionStore {
     try {
       if (events.length > 0) await this.events.publish(events);
     } finally {
+      // Audit failures must not keep ended sessions connected or their quota reserved.
       if (session.status === 'ended') {
         try { await this.quotas.release(session.principalId, session.id); }
         finally {

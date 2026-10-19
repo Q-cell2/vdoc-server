@@ -1,4 +1,5 @@
 import { VoiceSession, type DocumentId, type VoiceSessionId, type VoiceSessionRepository, type VoiceSessionSnapshot } from '@vdoc-server/domain';
+export { DurableObjectAuditPublisher, type AuditPage, type AuditRecord, type AuditStorage } from './audit';
 
 export interface StorageTransaction {
   get<T>(key: string): Promise<T | undefined>;

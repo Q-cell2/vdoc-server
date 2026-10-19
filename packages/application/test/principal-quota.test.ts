@@ -66,4 +66,18 @@ describe('per-principal admission across documents', () => {
     expect(h.connections.closed).toContainEqual({ sessionId: first.sessionId, reason: 'limit-duration' });
     expect((await grant(h, 'two')).ok).toBe(true);
   });
+  it('closes despite release failure and retries release without duplicating the end event', async () => {
+    const h = harness({ quotaLimits: limits });
+    const first = await connected(h);
+    const release = vi.spyOn(h.quotas, 'release').mockRejectedValueOnce(new Error('quota release unavailable'));
+    await expect(h.app.endVoiceSession.bySystem(first.sessionId, 'disconnected')).rejects.toThrow('quota release unavailable');
+    expect(h.repository.rows.get(first.sessionId)?.status).toBe('ended');
+    expect(h.connections.closed).toEqual([{ sessionId: first.sessionId, reason: 'disconnected' }]);
+    await h.app.endVoiceSession.bySystem(first.sessionId, 'disconnected');
+    expect(release).toHaveBeenCalledTimes(2);
+    expect(h.events.events.filter(event => event.type === 'VoiceSessionEnded')).toHaveLength(1);
+    expect(h.connections.closed).toHaveLength(1);
+    expect((await grant(h, 'two')).ok).toBe(true);
+  });
+
 });
