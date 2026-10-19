@@ -93,6 +93,14 @@ describe('ConfigureRealtimeSession', () => {
 });
 
 describe('ReviewToolCall, RecordToolResult and CompleteTurn', () => {
+  it('disconnects an ended session even when its audit subscriber fails', async () => {
+    const h = harness();
+    const { sessionId } = await connected(h);
+    h.events.publish = async () => { throw new Error('audit unavailable'); };
+    await expect(h.app.endVoiceSession.bySystem(sessionId, 'disconnected')).rejects.toThrow('audit unavailable');
+    expect(h.repository.rows.get(sessionId)?.status).toBe('ended');
+    expect(h.connections.closed).toEqual([{ sessionId, reason: 'disconnected' }]);
+  });
   const call = (sessionId: string, name: string, args: unknown = {}, turnId = 't1') => ({ sessionId, callId: `c-${Math.random().toString(36).slice(2)}`, name, arguments: args, turnId });
 
   it('reviews calls against the profile and keeps a content-free audit trail', async () => {

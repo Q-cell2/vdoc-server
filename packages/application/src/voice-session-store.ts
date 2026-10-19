@@ -46,9 +46,13 @@ export class VoiceSessionStore {
   async commit(session: VoiceSession): Promise<void> {
     const events = session.pullEvents();
     await this.repository.save(session);
-    if (events.length > 0) await this.events.publish(events);
-    if (session.status === 'ended' && events.some((event) => event.type === 'VoiceSessionEnded')) {
-      await this.connections.close(session.id, session.endReason ?? 'client');
+    try {
+      if (events.length > 0) await this.events.publish(events);
+    } finally {
+      // A broken subscriber must not leave an expired or revoked realtime session connected.
+      if (session.status === 'ended' && events.some((event) => event.type === 'VoiceSessionEnded')) {
+        await this.connections.close(session.id, session.endReason ?? 'client');
+      }
     }
   }
 }

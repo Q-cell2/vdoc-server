@@ -1,4 +1,4 @@
-import { DurableObjectVoiceSessionRepository, SerialCommandQueue } from '@vdoc-server/adapter-cloudflare';
+import { DurableObjectAuditPublisher, DurableObjectVoiceSessionRepository, SerialCommandQueue, type AuditPage } from '@vdoc-server/adapter-cloudflare';
 import { closeCodeOf, documentIdOf, isWebSocketUpgrade, json, matchRealtimeRoute, problem } from '@vdoc-server/adapter-http';
 import { createModelRegistry, fetchSocket, type WebSocketLike } from '@vdoc-server/adapter-vrt';
 import { createServer, type Server } from '@vdoc-server/composition';
@@ -26,12 +26,19 @@ export class DocumentVoiceRoom extends DurableObject<Env> {
   #server: Promise<Server> | undefined;
   readonly #commands = new SerialCommandQueue();
   readonly #sessions: DurableObjectVoiceSessionRepository;
+  readonly #audit: DurableObjectAuditPublisher;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.#sessions = new DurableObjectVoiceSessionRepository(ctx.storage);
+    this.#audit = new DurableObjectAuditPublisher(ctx.storage);
     // Only storage initialization belongs in blockConcurrencyWhile; commands may perform external I/O.
     void ctx.blockConcurrencyWhile(() => this.#sessions.ensureAlarm());
+  }
+
+  /** Internal binding RPC only. The public HTTP router does not expose an audit endpoint. */
+  auditEvents(sessionId: string, after = 0, limit = 100): AuditPage {
+    return this.#audit.list(sessionId, after, limit);
   }
 
   override async alarm(): Promise<void> {
@@ -73,6 +80,7 @@ export class DocumentVoiceRoom extends DurableObject<Env> {
       return createServer({
         config: config.value,
         sessions: this.#sessions,
+        subscribers: [this.#audit],
         runCommand: (command) => this.#commands.run(command),
         models: createModelRegistry({
           bosonApiKey: config.value.providerKeys.boson,

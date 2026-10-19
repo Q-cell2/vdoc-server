@@ -6,6 +6,8 @@ vdoc 的语音会话服务端：为文档签发语音会话、配置语音 Agent
 
 架构说明见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，关键决定见 [docs/adr](docs/adr)。
 
+Cloudflare 的领域审计事件同时写入文档房间的 SQLite，可按会话分页查询；字段白名单、保留期与内部查询方式见 [持久审计](docs/AUDIT.md)。
+
 ## 快速开始
 
 Node 22.13+。

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { convertV4MiniflareOptions, Miniflare } from 'miniflare';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { VoiceSessionSnapshot } from '@vdoc-server/domain';
+import type { AuditPage } from '@vdoc-server/adapter-cloudflare';
 
 let mf: Miniflare;
 let options: Parameters<typeof convertV4MiniflareOptions>[0];
@@ -12,7 +13,7 @@ let persist: string;
 const clientKey = 'runtime-test-client-key-not-for-production';
 const headers = { authorization: `Bearer ${clientKey}`, 'content-type': 'application/json' };
 // Only this test bundle exposes direct storage inspection/seeding. The production
-// Worker has no test routes or RPC methods. Inherit its real constructor/alarm.
+// Worker has no test routes. Inherit its real constructor/alarm and internal audit RPC.
 const harness = `
 import worker, { DocumentVoiceRoom } from './apps/worker/src/index.ts';
 export default worker;
@@ -20,6 +21,7 @@ export class TestRoom extends DocumentVoiceRoom {
   async fetch(request) {
     const url = new URL(request.url);
     if (url.searchParams.has('__inspect')) return Response.json({ snapshot: await this.ctx.storage.get('voice-session:' + url.searchParams.get('__inspect')), alarm: await this.ctx.storage.getAlarm() });
+    if (url.searchParams.has('__audit')) return Response.json(this.auditEvents(url.searchParams.get('__audit')));
     if (url.searchParams.has('__seed')) { const snapshot = await request.json(); await this.ctx.storage.put('voice-session:' + snapshot.id, snapshot); await this.ctx.storage.setAlarm(Date.now()); return new Response(null, { status: 204 }); }
     return super.fetch(request);
   }
@@ -29,6 +31,7 @@ async function room(documentId: string) {
   const base = `https://voice.test/v1/documents/${documentId}/voice-sessions`;
   return {
     inspect: async (id: string) => (await mf.dispatchFetch(`${base}?__inspect=${id}`)).json() as Promise<{ snapshot?: VoiceSessionSnapshot; alarm: number | null }>,
+    audit: async (id: string) => (await mf.dispatchFetch(`${base}?__audit=${id}`)).json() as Promise<AuditPage>,
     seed: async (snapshot: VoiceSessionSnapshot) => { const response = await mf.dispatchFetch(`${base}?__seed=1`, { method: 'POST', body: JSON.stringify(snapshot) }); expect(response.status).toBe(204); },
   };
 }
@@ -58,12 +61,26 @@ describe('SQLite Durable Objects in real workerd', () => {
     await Promise.all(responses.filter(r => r.status !== 201).map(r => r.text()));
     const before = await (await room('concurrent')).inspect(granted.sessionId);
     expect(before.snapshot?.status).toBe('granted'); expect(before.alarm).not.toBeNull();
+    const audit = await (await room('concurrent')).audit(granted.sessionId);
+    expect(audit.events.map((row) => row.event.type)).toEqual(['VoiceSessionGranted']);
     await mf.dispose();
     mf = new Miniflare(convertV4MiniflareOptions(options)); await mf.ready;
     const after = await (await room('concurrent')).inspect(granted.sessionId);
     expect(after.snapshot).toEqual(before.snapshot);
+    expect(await (await room('concurrent')).audit(granted.sessionId)).toEqual(audit);
     const wrong = await mf.dispatchFetch(`https://voice.test/v1/documents/another-doc/voice-sessions/${granted.sessionId}`, { headers });
     expect(wrong.status).toBe(404); await wrong.text();
+  });
+  it('publishes grant and end events through normal Worker requests without exposing public audit routes', async () => {
+    const response = await grant('audit');
+    const { sessionId } = await response.json() as { sessionId: string };
+    const ended = await mf.dispatchFetch(`https://voice.test/v1/documents/audit/voice-sessions/${sessionId}`, { method: 'DELETE', headers });
+    expect(ended.status).toBe(204);
+    const page = await (await room('audit')).audit(sessionId);
+    expect(page.events.map((row) => row.event.type)).toEqual(['VoiceSessionGranted', 'VoiceSessionEnded']);
+    const publicRoute = await mf.dispatchFetch(`https://voice.test/v1/documents/audit/voice-sessions/${sessionId}/events`, { headers });
+    expect(publicRoute.status).toBe(404); await publicRoute.text();
+    expect((await (await room('another-doc')).audit(sessionId)).events).toEqual([]);
   });
   it('expires an abandoned grant through its alarm without a session API request', async () => {
     const response = await grant('expires'); expect(response.status).toBe(201);
