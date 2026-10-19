@@ -22,7 +22,7 @@ let close: () => Promise<void>;
 const events = new RecordingEventPublisher();
 
 beforeAll(async () => {
-  const config = loadConfig({ VDOC_SERVER_ENV: 'test', VDOC_SERVER_CLIENTS: `vdoc-web:${CLIENT_KEY}`, VDOC_SERVER_MODEL: 'fake', VDOC_SERVER_LOG_LEVEL: 'error' });
+  const config = loadConfig({ VDOC_SERVER_ENV: 'test', VDOC_SERVER_CLIENTS: `vdoc-web:${CLIENT_KEY}`, VDOC_SERVER_MODEL: 'fake', VDOC_SERVER_LOG_LEVEL: 'error', VDOC_SERVER_MAX_CONCURRENT_SESSIONS_PER_PRINCIPAL: '100' });
   if (!config.ok) throw new Error(config.errors.join('; '));
   const server = await createNodeServer(config.value, { subscribers: [events], fakeResponder: respond, realtime: { resumeWindowMs: 150 } });
   const running = await startNodeServer(server, { port: 0 });

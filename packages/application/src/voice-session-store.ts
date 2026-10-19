@@ -3,7 +3,7 @@ import {
   type Principal, type Result, type VoiceSession, type VoiceSessionRepository,
 } from '@vdoc-server/domain';
 import { appError, fromDomain, type AppError } from './errors';
-import type { EventPublisher, RealtimeConnections } from './ports';
+import type { EventPublisher, PrincipalQuotaStore, RealtimeConnections } from './ports';
 
 /**
  * Application service shared by the use cases: loads sessions with the usual
@@ -15,6 +15,7 @@ export class VoiceSessionStore {
     private readonly repository: VoiceSessionRepository,
     private readonly events: EventPublisher,
     private readonly connections: RealtimeConnections,
+    private readonly quotas: PrincipalQuotaStore,
   ) {}
 
   /** Finds a session addressed as `documents/{documentId}/voice-sessions/{sessionId}`. */
@@ -46,9 +47,26 @@ export class VoiceSessionStore {
   async commit(session: VoiceSession): Promise<void> {
     const events = session.pullEvents();
     await this.repository.save(session);
-    if (events.length > 0) await this.events.publish(events);
-    if (session.status === 'ended' && events.some((event) => event.type === 'VoiceSessionEnded')) {
-      await this.connections.close(session.id, session.endReason ?? 'client');
+    try {
+      if (events.length > 0) await this.events.publish(events);
+    } finally {
+      if (session.status === 'ended') {
+        try { await this.quotas.release(session.principalId, session.id); }
+        finally {
+          if (events.some((event) => event.type === 'VoiceSessionEnded')) await this.connections.close(session.id, session.endReason ?? 'client');
+        }
+      }
     }
+  }
+
+  /** Reserve before persisting a new/extended deadline. A rejected lease leaves storage untouched. */
+  async reserveQuota(session: VoiceSession, supersedes: readonly VoiceSession[] = []): Promise<Result<void, AppError>> {
+    const snapshot = session.toSnapshot();
+    const reserved = await this.quotas.reserve({
+      principalId: session.principalId, sessionId: session.id,
+      expiresAt: snapshot.startedAt === null ? snapshot.connectDeadline + 1 : snapshot.startedAt + snapshot.limits.maxDurationMs,
+      supersedes: supersedes.filter((old) => old.principalId === session.principalId).map((old) => old.id),
+    });
+    return reserved.ok ? reserved : err({ ...fromDomain(reserved.error), retryAfterSeconds: reserved.error.retryAfterSeconds });
   }
 }

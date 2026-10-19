@@ -35,3 +35,4 @@ export interface EventPublisher {
 export interface RealtimeConnections {
   close(sessionId: VoiceSessionId, reason: EndReason): Promise<void>;
 }
+export type { PrincipalQuotaStore } from './principal-quota';

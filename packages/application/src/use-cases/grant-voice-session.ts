@@ -46,15 +46,16 @@ export class GrantVoiceSession {
     }
     const admitted = admission.admit(open);
     if (!admitted.ok) return err(fromDomain(admitted.error));
-    for (const superseded of admitted.value) {
-      superseded.end('superseded', now);
-      await store.commit(superseded);
-    }
-
     const session = VoiceSession.grant({ id: VoiceSessionId.assume(ids.next('vs')), documentId: documentId.value, principal: principal.value, profile, now });
     const grant = session.issueGrant(now);
     if (!grant.ok) return err(fromDomain(grant.error));
     const token = await signer.sign(grant.value);
+    const reserved = await store.reserveQuota(session, admitted.value);
+    if (!reserved.ok) return reserved;
+    for (const superseded of admitted.value) {
+      superseded.end('superseded', now);
+      await store.commit(superseded);
+    }
     await store.commit(session);
     return ok({ session: toView(session, now), grant: { token, expiresAt: grant.value.expiresAt } });
   }

@@ -42,6 +42,8 @@ export class AuthorizeRealtimeConnection {
       await store.commit(session);
       return err(fromDomain(connected.error));
     }
+    const reserved = await store.reserveQuota(session);
+    if (!reserved.ok) return reserved;
     await store.commit(session);
     return ok({ sessionId: session.id, documentId: session.documentId, principalId: session.principalId, profileId: session.profileId });
   }

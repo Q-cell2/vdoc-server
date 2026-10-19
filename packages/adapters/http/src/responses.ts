@@ -8,6 +8,7 @@ const STATUS: Record<AppErrorCode, number> = {
   INVALID_INPUT: 400,
   DOCUMENT_BUSY: 409,
   SESSION_CLOSED: 410,
+  QUOTA_EXCEEDED: 429,
 };
 
 export const statusOf = (code: AppErrorCode): number => STATUS[code];
@@ -34,10 +35,13 @@ export function problem(status: number, code: string, detail: string, headers: H
 
 export function fromAppError(error: AppError): Response {
   const status = statusOf(error.code);
-  return problem(status, error.code, error.message, status === 401 ? { 'www-authenticate': 'Bearer' } : {});
+  return problem(status, error.code, error.message, {
+    ...(status === 401 ? { 'www-authenticate': 'Bearer' } : {}),
+    ...(error.retryAfterSeconds !== undefined ? { 'retry-after': String(error.retryAfterSeconds) } : {}),
+  });
 }
 
 const TITLES: Record<number, string> = {
   400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not Found', 405: 'Method Not Allowed',
-  409: 'Conflict', 410: 'Gone', 413: 'Content Too Large', 415: 'Unsupported Media Type', 426: 'Upgrade Required', 500: 'Internal Server Error',
+  409: 'Conflict', 410: 'Gone', 413: 'Content Too Large', 415: 'Unsupported Media Type', 426: 'Upgrade Required', 429: 'Too Many Requests', 500: 'Internal Server Error',
 };
