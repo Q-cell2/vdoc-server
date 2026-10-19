@@ -5,6 +5,12 @@ import { VDOC_TOOLS, editingAssistantProfile, loadConfig } from '../src';
 const KEY = 'k'.repeat(40);
 
 describe('loadConfig', () => {
+  it('requires explicit legacy mode, rejects ambiguous flags and reserves the user namespace', () => {
+    expect(loadConfig({})).toMatchObject({ ok: true, value: { allowClientOnly: true } });
+    expect(loadConfig({ VDOC_SERVER_ALLOW_CLIENT_ONLY: 'false' })).toMatchObject({ ok: true, value: { allowClientOnly: false } });
+    expect(loadConfig({ VDOC_SERVER_ALLOW_CLIENT_ONLY: '1' }).ok).toBe(false);
+    expect(loadConfig({ VDOC_SERVER_CLIENTS: `usr_collision:${KEY}` }).ok).toBe(false);
+  });
   it('validates configurable per-principal quotas', () => {
     expect(loadConfig({})).toMatchObject({ ok: true, value: { quotas: { maxConcurrentSessions: 3, maxSessionsPerHour: 60 } } });
     expect(loadConfig({ VDOC_SERVER_MAX_CONCURRENT_SESSIONS_PER_PRINCIPAL: '2', VDOC_SERVER_MAX_SESSIONS_PER_HOUR: '10' })).toMatchObject({ ok: true, value: { quotas: { maxConcurrentSessions: 2, maxSessionsPerHour: 10 } } });
@@ -32,7 +38,7 @@ describe('loadConfig', () => {
       VDOC_SERVER_ENV: 'production', VDOC_SERVER_SIGNING_KEYS: `k2:${KEY},k1:${KEY}`, VDOC_SERVER_CLIENTS: `vdoc-web:${KEY}`,
       VDOC_SERVER_ALLOWED_ORIGINS: 'https://vdoc.app', BOSON_API_KEY: 'b', VDOC_SERVER_MODEL: 'boson:higgs-realtime', VDOC_SERVER_MAX_SESSION_MINUTES: '10',
     });
-    expect(config).toMatchObject({ ok: true, value: { model: { provider: 'boson', model: 'higgs-realtime' }, limits: { maxDurationMs: 600_000 }, signingKeys: [{ id: 'k2' }, { id: 'k1' }] } });
+    expect(config).toMatchObject({ ok: true, value: { allowClientOnly: false, model: { provider: 'boson', model: 'higgs-realtime' }, limits: { maxDurationMs: 600_000 }, signingKeys: [{ id: 'k2' }, { id: 'k1' }] } });
   });
 
   it('rejects a provider without its key and malformed numbers', () => {

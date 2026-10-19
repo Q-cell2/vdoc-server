@@ -3,7 +3,13 @@ import type { CallerCredentials } from '@vdoc-server/application';
 export function credentialsOf(request: Request): CallerCredentials {
   const header = request.headers.get('authorization') ?? '';
   const match = /^Bearer\s+(.+)$/i.exec(header);
-  return { bearer: match?.[1]?.trim() || undefined };
+  const userId = request.headers.get('x-vdoc-user-id');
+  const requestId = request.headers.get('x-request-id');
+  return {
+    bearer: match?.[1]?.trim() || undefined,
+    ...(userId !== null ? { trustedUserId: userId } : {}),
+    requestId: requestId && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(requestId) && !/[^A-Za-z0-9._:-]/.test(requestId) ? requestId : crypto.randomUUID(),
+  };
 }
 
 export type JsonBody =

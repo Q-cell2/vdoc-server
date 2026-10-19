@@ -138,6 +138,27 @@ describe('Durable Object lifecycle', () => {
     expect(storage.alarm).toBe(now + 1_001);
   });
 
+  it('retains an old ended outbox and backs off rather than rescheduling its expired retention deadline', async () => {
+    const storage = new MapStorage();
+    let now = 5000;
+    const repo = new DurableObjectVoiceSessionRepository(storage, 1000, () => now);
+    const value = session('vs_pending', 'doc', 0);
+    value.end('client', 0);
+    value.stageAuditEvents(value.pullEvents());
+    await repo.save(value);
+    await repo.pruneAndSchedule();
+    expect(storage.map.size).toBe(1);
+    expect(storage.alarm).toBe(now + 30_000);
+    now += 1000;
+    await repo.pruneAndSchedule();
+    expect(storage.alarm).toBe(now + 30_000);
+    value.acknowledgeAuditEvents();
+    await repo.save(value);
+    await repo.pruneAndSchedule();
+    expect(storage.map.size).toBe(0);
+    expect(storage.alarm).toBeNull();
+  });
+
   it('deletes the alarm when the last retained session is removed; repeated cleanup is harmless', async () => {
     const storage = new MapStorage();
     let now = 0;

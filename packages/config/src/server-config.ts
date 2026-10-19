@@ -5,6 +5,7 @@ export type Environment = 'development' | 'test' | 'production';
 /** Everything a composition root needs, already validated. */
 export interface ServerConfig {
   readonly environment: Environment;
+  readonly allowClientOnly: boolean;
   readonly logLevel: 'debug' | 'info' | 'warn' | 'error';
   /** First key signs; all verify. */
   readonly signingKeys: readonly { readonly id: string; readonly secret: Uint8Array }[];
@@ -35,6 +36,9 @@ export function loadConfig(env: Env): { ok: true; value: ServerConfig } | { ok: 
   const generated: string[] = [];
   const environment = parseEnvironment(env.VDOC_SERVER_ENV ?? env.NODE_ENV, errors);
   const production = environment === 'production';
+  const legacy = env.VDOC_SERVER_ALLOW_CLIENT_ONLY;
+  if (legacy !== undefined && legacy !== 'true' && legacy !== 'false') errors.push('VDOC_SERVER_ALLOW_CLIENT_ONLY must be true or false.');
+  const allowClientOnly = legacy === undefined ? !production : legacy === 'true';
 
   const signingKeys = parseList(env.VDOC_SERVER_SIGNING_KEYS).map((entry) => {
     const [id, secret] = splitOnce(entry, ':');
@@ -51,7 +55,7 @@ export function loadConfig(env: Env): { ok: true; value: ServerConfig } | { ok: 
 
   const clients = parseList(env.VDOC_SERVER_CLIENTS).map((entry) => {
     const [id, key] = splitOnce(entry, ':');
-    if (!id || !key || key.length < 24) errors.push('VDOC_SERVER_CLIENTS entries must be "id:key" with a key of at least 24 characters.');
+    if (!id || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id) || /[^A-Za-z0-9._:-]/.test(id) || id.startsWith('usr_') || !key || key.length < 24) errors.push('VDOC_SERVER_CLIENTS entries must be "id:key" with a key of at least 24 characters.');
     return { id: id ?? '', name: id ?? '', key: key ?? '' };
   });
   if (clients.length === 0) {
@@ -94,7 +98,7 @@ export function loadConfig(env: Env): { ok: true; value: ServerConfig } | { ok: 
   return {
     ok: true,
     value: {
-      environment, logLevel: logLevel as ServerConfig['logLevel'], signingKeys, clients, allowedOrigins, model, providerKeys,
+      environment, allowClientOnly, logLevel: logLevel as ServerConfig['logLevel'], signingKeys, clients, allowedOrigins, model, providerKeys,
       concurrency: concurrency as ConcurrencyStrategy, limits: limits.value, quotas, generated,
     },
   };

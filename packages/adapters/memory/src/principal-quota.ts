@@ -17,6 +17,14 @@ export class InMemoryPrincipalQuotaStore implements PrincipalQuotaStore {
     return ok(undefined);
   }
 
+  async confirm(principalId: string, sessionId: string): Promise<void> {
+    this.#states.set(principalId, this.#policy.confirm(this.#states.get(principalId) ?? PrincipalQuota.empty, sessionId, this.now()));
+  }
+
+  async cancel(principalId: string, sessionId: string): Promise<void> {
+    this.#states.set(principalId, this.#policy.cancel(this.#states.get(principalId) ?? PrincipalQuota.empty, sessionId, this.now()));
+  }
+
   async release(principalId: string, sessionId: string): Promise<void> {
     const state = this.#policy.release(this.#states.get(principalId) ?? PrincipalQuota.empty, sessionId, this.now());
     if (!state.slots.length && !state.starts.length) this.#states.delete(principalId);

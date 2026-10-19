@@ -1,7 +1,7 @@
 import { DocumentId, ProfileId, VoiceSession, VoiceSessionId, err, ok, type AgentProfileRepository, type DocumentSessionPolicy, type Result } from '@vdoc-server/domain';
 import { appError, fromDomain, type AppError } from '../errors';
 import type { CallerAuthenticator, CallerCredentials, Clock, GrantSigner, IdGenerator } from '../ports';
-import type { VoiceSessionStore } from '../voice-session-store';
+import { QuotaUnavailable, quotaUnavailable, type VoiceSessionStore } from '../voice-session-store';
 import { authenticateCaller } from './caller';
 import { toView, type GrantView, type VoiceSessionView } from './views';
 
@@ -44,19 +44,28 @@ export class GrantVoiceSession {
       if (session.expireIfOverdue(now)) await store.commit(session);
       else open.push(session);
     }
+    const crossesUser = open.some((session) => !session.isOwnedBy(principal.value.id) &&
+      (principal.value.kind === 'user' || session.toSnapshot().principalKind === 'user'));
+    if (crossesUser) return err(appError('DOCUMENT_BUSY', 'This document has a session owned by another principal.'));
     const admitted = admission.admit(open);
     if (!admitted.ok) return err(fromDomain(admitted.error));
-    const session = VoiceSession.grant({ id: VoiceSessionId.assume(ids.next('vs')), documentId: documentId.value, principal: principal.value, profile, now });
+    const session = VoiceSession.grant({ id: VoiceSessionId.assume(ids.next('vs')), documentId: documentId.value, principal: principal.value, profile, now, ...(input.credentials.requestId ? { requestId: input.credentials.requestId } : {}) });
     const grant = session.issueGrant(now);
     if (!grant.ok) return err(fromDomain(grant.error));
     const token = await signer.sign(grant.value);
-    const reserved = await store.reserveQuota(session, admitted.value);
+    const reserved = await store.reserveQuota(session, admitted.value, input.credentials.requestId);
     if (!reserved.ok) return reserved;
-    for (const superseded of admitted.value) {
-      superseded.end('superseded', now);
-      await store.commit(superseded);
+    try {
+      for (const superseded of admitted.value) {
+        superseded.end('superseded', now);
+        await store.commit(superseded, input.credentials.requestId);
+      }
+      await store.commit(session, input.credentials.requestId);
+    } catch (error) {
+      await store.reconcileCreation(session);
+      if (error instanceof QuotaUnavailable) return err(quotaUnavailable());
+      throw error;
     }
-    await store.commit(session);
     return ok({ session: toView(session, now), grant: { token, expiresAt: grant.value.expiresAt } });
   }
 }

@@ -20,7 +20,7 @@ export class EndVoiceSession {
     const session = await this.deps.store.findOwned(input.documentId, input.sessionId, principal.value);
     if (!session.ok) return err(session.error);
     session.value.end('client', this.deps.clock.now());
-    await this.deps.store.commit(session.value);
+    await this.deps.store.commit(session.value, input.credentials.requestId);
     return ok(undefined);
   }
 
@@ -30,6 +30,13 @@ export class EndVoiceSession {
     if (!session) return;
     session.end(reason, this.deps.clock.now());
     await this.deps.store.commit(session);
+  }
+
+  /** Internal alarm/recovery hook; retries the persisted content-free outbox. */
+  async retryPublication(sessionId: string): Promise<void> {
+    const id = VoiceSessionId.parse(sessionId);
+    const session = id.ok ? await this.deps.store.findById(id.value) : undefined;
+    if (session?.toSnapshot().pendingAuditEvents?.length) await this.deps.store.commit(session);
   }
 
   /** Alarm delivery can be late or repeated; re-read the current deadline before ending anything. */

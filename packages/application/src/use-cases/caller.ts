@@ -4,5 +4,5 @@ import type { CallerAuthenticator, CallerCredentials } from '../ports';
 
 export async function authenticateCaller(authenticator: CallerAuthenticator, credentials: CallerCredentials): Promise<Result<Principal, AppError>> {
   const principal = credentials.bearer ? await authenticator.authenticate(credentials) : undefined;
-  return principal ? ok(principal) : err(appError('UNAUTHENTICATED', 'A valid client key is required.'));
+  return principal ? ok(principal) : err(appError('UNAUTHENTICATED', 'A valid application credential and permitted caller identity are required.'));
 }

@@ -16,12 +16,14 @@ export class ApiKeyAuthenticator implements CallerAuthenticator {
   private constructor(private readonly clients: readonly { digest: Uint8Array; principal: Principal }[]) {}
 
   static async create(clients: readonly ApiClient[]): Promise<ApiKeyAuthenticator> {
-    const entries = [];
+    const entries: { digest: Uint8Array; principal: Principal }[] = [];
     for (const client of clients) {
       const id = PrincipalId.parse(client.id);
-      if (!id.ok) throw new Error(`Invalid client id "${client.id}".`);
+      if (!id.ok || /[^A-Za-z0-9._:-]/.test(client.id) || client.id.startsWith('usr_')) throw new Error(`Invalid client id "${client.id}".`);
       if (client.key.length < 24) throw new Error(`Client key for "${client.id}" must be at least 24 characters.`);
-      entries.push({ digest: await sha256(client.key), principal: { id: id.value, kind: 'client' as const, name: client.name } });
+      const digest = await sha256(client.key);
+      if (entries.some((entry) => entry.principal.id !== id.value && timingSafeEqual(entry.digest, digest))) throw new Error('Client keys must identify exactly one application.');
+      entries.push({ digest, principal: { id: id.value, kind: 'client' as const, name: client.name } });
     }
     return new ApiKeyAuthenticator(entries);
   }

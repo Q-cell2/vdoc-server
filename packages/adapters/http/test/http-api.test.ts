@@ -24,7 +24,7 @@ describe('HttpApi', () => {
     expect(response.status).toBe(201);
     expect(response.headers.get('location')).toBe('/v1/documents/doc%201/voice-sessions/vs_1');
     expect(await response.json()).toMatchObject({ sessionId: 'vs_1', grant: { token: 't' }, realtimePath: '/v1/documents/doc%201/voice-sessions/vs_1/realtime' });
-    expect(app.grantVoiceSession.execute).toHaveBeenCalledWith({ credentials: { bearer: 'abc' }, documentId: 'doc 1', profileId: 'p' });
+    expect(app.grantVoiceSession.execute).toHaveBeenCalledWith({ credentials: { bearer: 'abc', requestId: expect.any(String) }, documentId: 'doc 1', profileId: 'p' });
   });
 
   it('rejects bad bodies before reaching the use case', async () => {

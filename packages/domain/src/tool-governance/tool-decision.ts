@@ -1,6 +1,6 @@
 import type { RiskLevel } from './risk';
 
-export type ToolDenialCode = 'UNKNOWN_TOOL' | 'TOOL_BUDGET_EXCEEDED' | 'SESSION_CLOSED';
+export type ToolDenialCode = 'UNKNOWN_TOOL' | 'TOOL_BUDGET_EXCEEDED' | 'SESSION_CLOSED' | 'CALL_ID_REUSED';
 
 /**
  * The verdict on a tool call. `confirm` means: not now; ask the user, and the

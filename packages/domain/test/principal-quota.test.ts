@@ -5,7 +5,7 @@ const reservation = (sessionId: string, expiresAt = 60_001, supersedes: string[]
 function reserve(policy: PrincipalQuota, state: PrincipalQuotaState, id: string, now = 0, supersedes: string[] = []) {
   const result = policy.reserve(state, reservation(id, now + 60_001, supersedes), now);
   if (!result.ok) throw new Error(result.error.message);
-  return result.value;
+  return policy.confirm(result.value, id, now);
 }
 
 describe('PrincipalQuota', () => {
@@ -49,4 +49,19 @@ describe('PrincipalQuota', () => {
     expect(state).toEqual(PrincipalQuota.empty);
     expect(() => new PrincipalQuota({ maxConcurrentSessions: 0, maxSessionsPerHour: 1 })).toThrow();
   });
+  it('reserves pending starts, confirms once, cancels only pending starts and expires orphaned holds', () => {
+    const policy = new PrincipalQuota({ maxConcurrentSessions: 1, maxSessionsPerHour: 1 });
+    const held = policy.reserve(PrincipalQuota.empty, reservation('pending'), 0);
+    if (!held.ok) throw new Error();
+    expect(policy.reserve(held.value, reservation('other'), 1).ok).toBe(false);
+    expect(policy.cancel(held.value, 'pending', 1)).toEqual(PrincipalQuota.empty);
+    expect(policy.prune(held.value, 60_001)).toEqual(PrincipalQuota.empty);
+    const consumed = policy.confirm(held.value, 'pending', 1);
+    expect(policy.cancel(consumed, 'pending', 2)).toEqual(consumed);
+    const released = policy.release(consumed, 'pending', 3);
+    expect(policy.reserve(released, reservation('other'), 4)).toMatchObject({ ok: false, error: { quotaKind: 'rate' } });
+    // Pre-upgrade persisted starts are already consumed.
+    expect(policy.cancel({ slots: [], starts: [{ sessionId: 'old', at: 0 }] }, 'old', 1).starts).toHaveLength(1);
+  });
+
 });

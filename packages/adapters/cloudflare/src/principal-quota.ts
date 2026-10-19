@@ -19,6 +19,16 @@ export class DurablePrincipalQuotaStore implements PrincipalQuotaStore {
     });
   }
 
+  async confirm(_principalId: string, sessionId: string): Promise<void> { await this.#change('confirm', sessionId); }
+  async cancel(_principalId: string, sessionId: string): Promise<void> { await this.#change('cancel', sessionId); }
+
+  async #change(action: 'confirm' | 'cancel', sessionId: string): Promise<void> {
+    await this.storage.transaction(async (tx) => {
+      const state = await tx.get<PrincipalQuotaState>('quota') ?? PrincipalQuota.empty;
+      await this.#save(tx, this.#policy[action](state, sessionId, this.now()));
+    });
+  }
+
   async release(_principalId: string, sessionId: string): Promise<void> {
     await this.storage.transaction(async (tx) => {
       const state = await tx.get<PrincipalQuotaState>('quota') ?? PrincipalQuota.empty;
@@ -50,6 +60,12 @@ export class PrincipalQuotaBinding<Id> implements PrincipalQuotaStore {
   constructor(private readonly namespace: { idFromName(name: string): Id; get(id: Id): PrincipalQuotaStore }) {}
   reserve(input: QuotaReservation): Promise<Result<void, QuotaExceeded>> {
     return this.namespace.get(this.namespace.idFromName(input.principalId)).reserve(input);
+  }
+  confirm(principalId: string, sessionId: string): Promise<void> {
+    return this.namespace.get(this.namespace.idFromName(principalId)).confirm(principalId, sessionId);
+  }
+  cancel(principalId: string, sessionId: string): Promise<void> {
+    return this.namespace.get(this.namespace.idFromName(principalId)).cancel(principalId, sessionId);
   }
   release(principalId: string, sessionId: string): Promise<void> {
     return this.namespace.get(this.namespace.idFromName(principalId)).release(principalId, sessionId);
