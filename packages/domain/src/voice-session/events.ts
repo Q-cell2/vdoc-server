@@ -30,7 +30,15 @@ export interface ToolCallCompleted extends DomainEvent<'ToolCallCompleted'> {
   readonly ok: boolean;
   readonly code?: string;
 }
-export interface TurnCompleted extends DomainEvent<'TurnCompleted'> {
+/** Optional measurements; missing latency means it was not measured, never zero. */
+export interface TurnMetrics {
+  readonly timeToFirstAudioMs?: number;
+  readonly timeToFirstToolCallMs?: number;
+  readonly interruptLatencyMs?: number;
+  /** Calls executed by the realtime runtime, distinct from calls reviewed by policy. */
+  readonly modelToolCalls?: number;
+}
+export interface TurnCompleted extends DomainEvent<'TurnCompleted'>, TurnMetrics {
   readonly turnId: string;
   readonly toolCalls: number;
 }

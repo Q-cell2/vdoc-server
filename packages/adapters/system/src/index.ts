@@ -1,5 +1,6 @@
 import type { Clock, EventPublisher, IdGenerator } from '@vdoc-server/application';
 import type { DomainEvent } from '@vdoc-server/domain';
+export { TurnMetricsPublisher } from './metrics';
 
 export const systemClock: Clock = { now: () => Date.now() };
 

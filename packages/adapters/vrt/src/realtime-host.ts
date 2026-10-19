@@ -152,8 +152,8 @@ export class RealtimeHost implements RealtimeConnections {
             sessionId, callId: call.callId, name: call.name, turnId: call.turn.id, ok: result.ok, code: result.ok ? undefined : result.code,
           }).catch((error: unknown) => this.#log('error', 'recording a tool result failed', { sessionId, error: String(error) }));
         },
-        onTurnEnd: (turn) => {
-          void handlers().completeTurn.execute({ sessionId, turnId: turn.id })
+        onTurnEnd: (turn, metrics) => {
+          void handlers().completeTurn.execute({ sessionId, turnId: turn.id, metrics })
             .catch((error: unknown) => this.#log('error', 'completing a turn failed', { sessionId, error: String(error) }));
         },
         onError: (error, recoverable) => this.#log(recoverable ? 'warn' : 'error', 'realtime model error', { sessionId, error: error.message }),

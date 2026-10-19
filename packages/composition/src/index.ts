@@ -1,7 +1,7 @@
 import { HttpApi } from '@vdoc-server/adapter-http';
 import { InMemoryAgentProfileRepository } from '@vdoc-server/adapter-memory';
 import { ApiKeyAuthenticator, HmacGrantSigner } from '@vdoc-server/adapter-security';
-import { AuditLogPublisher, CompositeEventPublisher, JsonLogger, RandomIdGenerator, systemClock } from '@vdoc-server/adapter-system';
+import { AuditLogPublisher, CompositeEventPublisher, JsonLogger, RandomIdGenerator, TurnMetricsPublisher, systemClock } from '@vdoc-server/adapter-system';
 import { RealtimeHost, type ModelRegistry, type Scheduler } from '@vdoc-server/adapter-vrt';
 import { createApplication, type Application, type Clock, type CommandRunner, type EventPublisher } from '@vdoc-server/application';
 import { editingAssistantProfile, type ServerConfig } from '@vdoc-server/config';
@@ -62,7 +62,7 @@ export async function createServer(parts: ServerParts): Promise<Server> {
     signer,
     clock: parts.clock ?? systemClock,
     ids: new RandomIdGenerator(),
-    events: new CompositeEventPublisher([new AuditLogPublisher(logger), ...(parts.subscribers ?? [])]),
+    events: new CompositeEventPublisher([new AuditLogPublisher(logger), new TurnMetricsPublisher(logger), ...(parts.subscribers ?? [])]),
     connections: realtime,
     admission: new DocumentSessionPolicy(config.concurrency),
     toolPolicy: defaultToolPolicy(),

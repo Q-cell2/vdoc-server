@@ -100,6 +100,8 @@ describe('realtime voice session', () => {
     session.sendText('please read it');
     await until(() => calls.includes('read_document'));
     await until(() => events.types().includes('ToolCallCompleted'));
+    await until(() => events.events.some((event) => event.type === 'TurnCompleted' && event.aggregateId === granted.sessionId));
+    expect(events.events.find((event) => event.type === 'TurnCompleted' && event.aggregateId === granted.sessionId)).toMatchObject({ modelToolCalls: 1 });
     expect(events.events.find((e) => e.type === 'ToolCallReviewed')).toMatchObject({ tool: 'read_document', decision: 'allow' });
     expect(await status('doc-d', granted.sessionId)).toMatchObject({ status: 'active' });
     await session.close();
