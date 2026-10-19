@@ -1,6 +1,6 @@
 import { DocumentId, PrincipalId, SessionGrant, VoiceSessionId } from '@vdoc-server/domain';
 import { describe, expect, it } from 'vitest';
-import { ApiKeyAuthenticator, HmacGrantSigner } from '../src';
+import { ApiKeyAuthenticator, HmacGrantSigner, TrustedUserAuthenticator } from '../src';
 
 const secret = (seed: string) => new TextEncoder().encode(seed.padEnd(32, '.'));
 const grant = SessionGrant.issue({
@@ -51,5 +51,27 @@ describe('ApiKeyAuthenticator', () => {
   it('refuses short keys and invalid ids at startup', async () => {
     await expect(ApiKeyAuthenticator.create([{ id: 'x', name: 'x', key: 'short' }])).rejects.toThrow();
     await expect(ApiKeyAuthenticator.create([{ id: 'bad id', name: 'x', key: 'k'.repeat(30) }])).rejects.toThrow();
+  });
+});
+
+
+describe('trusted application user assertions', () => {
+  it('verifies applications before deriving user namespaces, and rejects missing or invalid assertions', async () => {
+    const app = await ApiKeyAuthenticator.create([{ id: 'web', name: 'web', key: 'a'.repeat(30) }, { id: 'other', name: 'other', key: 'b'.repeat(30) }]);
+    const strict = new TrustedUserAuthenticator(app, false);
+    const alice = await strict.authenticate({ bearer: 'a'.repeat(30), trustedUserId: 'alice' });
+    expect(alice).toMatchObject({ kind: 'user', clientId: 'web', userId: 'alice' });
+    expect(alice?.id).toMatch(/^usr_[a-f0-9]{64}$/);
+    expect((await strict.authenticate({ bearer: 'b'.repeat(30), trustedUserId: 'alice' }))?.id).not.toBe(alice?.id);
+    expect(await strict.authenticate({ bearer: 'wrong', trustedUserId: 'alice' })).toBeUndefined();
+    expect(await strict.authenticate({ bearer: 'a'.repeat(30) })).toBeUndefined();
+    const legacy = new TrustedUserAuthenticator(app, true);
+    expect(await legacy.authenticate({ bearer: 'a'.repeat(30) })).toMatchObject({ kind: 'client' });
+    for (const trustedUserId of ['', ' ', 'alice\n', 'alice\r', 'a,b', 'a'.repeat(129), '用户']) {
+      expect(await strict.authenticate({ bearer: 'a'.repeat(30), trustedUserId })).toBeUndefined();
+      expect(await legacy.authenticate({ bearer: 'a'.repeat(30), trustedUserId })).toBeUndefined();
+    }
+    await expect(ApiKeyAuthenticator.create([{ id: 'one', name: 'one', key: 'a'.repeat(30) }, { id: 'two', name: 'two', key: 'a'.repeat(30) }])).rejects.toThrow('exactly one application');
+    await expect(ApiKeyAuthenticator.create([{ id: 'usr_collision', name: 'x', key: 'a'.repeat(30) }])).rejects.toThrow();
   });
 });

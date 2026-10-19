@@ -45,8 +45,13 @@ export class DocumentVoiceRoom extends DurableObject<Env> {
   override async alarm(): Promise<void> {
     const server = await this.#start();
     const overdue = await this.#commands.run(() => this.#sessions.findOverdue());
-    for (const id of overdue) await server.application.endVoiceSession.expireIfOverdue(id);
-    await this.#commands.run(() => this.#sessions.pruneAndSchedule());
+    try {
+      for (const id of overdue) await server.application.endVoiceSession.expireIfOverdue(id);
+      const pending = await this.#commands.run(() => this.#sessions.findPendingPublications());
+      for (const id of pending) await server.application.endVoiceSession.retryPublication(id);
+    } finally {
+      await this.#commands.run(() => this.#sessions.pruneAndSchedule());
+    }
   }
 
   override async fetch(request: Request): Promise<Response> {
@@ -110,6 +115,8 @@ export class PrincipalQuotaRoom extends DurableObject<Env> {
   }
 
   reserve(input: Parameters<DurablePrincipalQuotaStore['reserve']>[0]) { return this.#quotas.reserve(input); }
+  confirm(principalId: string, sessionId: string) { return this.#quotas.confirm(principalId, sessionId); }
+  cancel(principalId: string, sessionId: string) { return this.#quotas.cancel(principalId, sessionId); }
   release(principalId: string, sessionId: string) { return this.#quotas.release(principalId, sessionId); }
   override alarm() { return this.#quotas.prune(); }
 }

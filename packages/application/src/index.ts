@@ -13,5 +13,5 @@ export { RenewSessionGrant, type RenewSessionGrantInput } from './use-cases/rene
 export { ResolveRealtimeRoute, type RealtimeRoute } from './use-cases/resolve-realtime-route';
 export { ReviewToolCall, type ToolCallInput } from './use-cases/review-tool-call';
 export type { GrantView, VoiceSessionView } from './use-cases/views';
-export { VoiceSessionStore } from './voice-session-store';
+export { VoiceSessionStore, QuotaUnavailable, quotaUnavailable } from './voice-session-store';
 export type { PrincipalQuotaStore } from './ports';

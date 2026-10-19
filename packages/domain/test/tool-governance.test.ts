@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RiskAssessor, fingerprint } from '../src';
+import { RiskAssessor, VoiceSession, fingerprint } from '../src';
 import { activeSession, call, governance, ops } from './fixtures';
 
 describe('RiskAssessor', () => {
@@ -67,4 +67,17 @@ describe('VoiceSession.reviewToolCall', () => {
     expect(session.reviewToolCall(call('read_document', {}), governance(), 3)).toMatchObject({ kind: 'deny', code: 'SESSION_CLOSED' });
     expect(activeSession(0, { maxDurationMs: 10 }).reviewToolCall(call('read_document', {}), governance(), 10)).toMatchObject({ kind: 'deny', code: 'SESSION_CLOSED' });
   });
+  it('persists review idempotency but never reuses an allow for a different request or a closed session', () => {
+    const session = activeSession();
+    const request = call('read_document', {});
+    expect(session.reviewToolCall(request, governance(), 2000).kind).toBe('allow');
+    const restored = VoiceSession.restore(structuredClone(session.toSnapshot()));
+    expect(restored.reviewToolCall(request, governance(), 2001).kind).toBe('allow');
+    expect(restored.usage.toolCalls).toBe(1);
+    expect(restored.pullEvents()).toEqual([]);
+    expect(restored.reviewToolCall({ ...request, name: 'apply_document_operations', arguments: ops('text.delete') }, governance(), 2002)).toMatchObject({ kind: 'deny', code: 'CALL_ID_REUSED' });
+    restored.end('client', 2003);
+    expect(restored.reviewToolCall(request, governance(), 2004)).toMatchObject({ kind: 'deny', code: 'SESSION_CLOSED' });
+  });
+
 });

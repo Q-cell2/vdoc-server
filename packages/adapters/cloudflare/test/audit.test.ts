@@ -90,4 +90,22 @@ describe('SQLite audit publisher', () => {
       expect(sink.list('vs_a').events.map((row) => row.event.type)).toEqual(['VoiceSessionEnded']);
     } finally { storage.db.close(); }
   });
+  it('retains trusted attribution and deduplicates settlement retries atomically across reconstruction', async () => {
+    const storage = new SqliteStorage();
+    try {
+      const row = event('TurnCompleted', { requestId: 'request-1', clientId: 'app', userId: 'user-A', principalId: 'usr_abc', documentId: 'doc', settlementId: 'vs_a:turn:one', usageUnit: 'turn', usageDelta: 1 });
+      const sink = new DurableObjectAuditPublisher(storage);
+      await sink.publish([row, row]);
+      const restored = new DurableObjectAuditPublisher(storage);
+      await restored.publish([row]);
+      expect(restored.list('vs_a').events).toHaveLength(1);
+      expect(restored.list('vs_a').events[0]?.event).toMatchObject(row);
+      storage.failOn = 'vs_a:turn:two';
+      await expect(restored.publish([event('TurnCompleted', { settlementId: 'vs_a:turn:two' })])).rejects.toThrow();
+      storage.failOn = '';
+      await restored.publish([event('TurnCompleted', { settlementId: 'vs_a:turn:two' })]);
+      expect(restored.list('vs_a').events).toHaveLength(2);
+    } finally { storage.db.close(); }
+  });
+
 });

@@ -83,6 +83,12 @@ export class TestQuotas implements PrincipalQuotaStore {
     this.states.set(input.principalId, result.value);
     return ok(undefined);
   }
+  async confirm(principalId: string, sessionId: string) {
+    this.states.set(principalId, this.policy.confirm(this.states.get(principalId) ?? PrincipalQuota.empty, sessionId, this.clock.now()));
+  }
+  async cancel(principalId: string, sessionId: string) {
+    this.states.set(principalId, this.policy.cancel(this.states.get(principalId) ?? PrincipalQuota.empty, sessionId, this.clock.now()));
+  }
   async release(principalId: string, sessionId: string) {
     this.states.set(principalId, this.policy.release(this.states.get(principalId) ?? PrincipalQuota.empty, sessionId, this.clock.now()));
   }

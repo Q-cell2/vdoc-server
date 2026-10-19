@@ -48,7 +48,7 @@ export interface Application {
 
 /** Factory: wires use cases to their ports. Composition roots call this once. */
 export function createApplication(deps: ApplicationDependencies): Application {
-  const store = new VoiceSessionStore(deps.sessions, deps.events, deps.connections, deps.quotas);
+  const store = new VoiceSessionStore(deps.sessions, deps.events, deps.connections, deps.quotas, deps.clock);
   const { profiles, authenticator, signer, clock, ids, admission } = deps;
   const app: Application = {
     grantVoiceSession: new GrantVoiceSession({ store, profiles, authenticator, signer, clock, ids, admission }),
@@ -73,6 +73,7 @@ export function createApplication(deps: ApplicationDependencies): Application {
     endVoiceSession: {
       byClient: wrap(app.endVoiceSession.byClient.bind(app.endVoiceSession)),
       bySystem: wrap(app.endVoiceSession.bySystem.bind(app.endVoiceSession)),
+      retryPublication: wrap(app.endVoiceSession.retryPublication.bind(app.endVoiceSession)),
       expireIfOverdue: wrap(app.endVoiceSession.expireIfOverdue.bind(app.endVoiceSession)),
     },
     resolveRealtimeRoute: { execute: wrap(app.resolveRealtimeRoute.execute.bind(app.resolveRealtimeRoute)) },

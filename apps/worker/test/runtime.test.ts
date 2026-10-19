@@ -2,6 +2,7 @@ import { build } from 'esbuild';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { convertV4MiniflareOptions, Miniflare } from 'miniflare';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { VoiceSessionSnapshot } from '@vdoc-server/domain';
@@ -64,6 +65,115 @@ beforeAll(async () => {
 afterAll(async () => { await mf?.dispose(); if (persist) await rm(persist, { recursive: true, force: true }); });
 
 describe('SQLite Durable Objects in real workerd', () => {
+  it('isolates trusted users across document DOs and preserves ownership, audit and quota after restart', async () => {
+    const alice = 'runtime-user-alice';
+    const bob = 'runtime-user-bob';
+    const principal = (clientId: string, userId: string) => `usr_${createHash('sha256').update(JSON.stringify([clientId, userId])).digest('hex')}`;
+    const userHeaders = (userId: string, key = clientKey, requestId = crypto.randomUUID()) => ({
+      authorization: `Bearer ${key}`, 'x-vdoc-user-id': userId, 'x-request-id': requestId,
+    });
+    const post = async (doc: string, userId: string, key = clientKey) => {
+      const requestId = crypto.randomUUID();
+      const response = await mf.dispatchFetch(`https://voice.test/v1/documents/${doc}/voice-sessions`, {
+        method: 'POST', headers: userHeaders(userId, key, requestId),
+      });
+      return { doc, requestId, response };
+    };
+    const endpoint = (row: { doc: string; sessionId: string }) => `https://voice.test/v1/documents/${row.doc}/voice-sessions/${row.sessionId}`;
+    const results = await Promise.all(Array.from({ length: 8 }, (_, index) => post(`user-alice-${index}`, alice)));
+    const admitted: { doc: string; sessionId: string; requestId: string }[] = [];
+    for (const { doc, requestId, response } of results) {
+      if (response.status === 201) admitted.push({ doc, requestId, ...(await response.json() as { sessionId: string }) });
+      else {
+        expect(response.status).toBe(429);
+        expect(Number(response.headers.get('retry-after'))).toBeGreaterThan(0);
+        expect(await response.json()).toMatchObject({ code: 'QUOTA_EXCEEDED', quotaKind: 'concurrency' });
+      }
+    }
+    expect(admitted).toHaveLength(3);
+    const first = admitted[0]!;
+    const stored = await (await room(first.doc)).inspect(first.sessionId);
+    expect(stored.snapshot).toMatchObject({
+      principalId: principal('web', alice), clientId: 'web', userId: alice, requestId: first.requestId,
+    });
+    const audit = await (await room(first.doc)).audit(first.sessionId);
+    expect(audit.events).toHaveLength(1);
+    expect(audit.events[0]!.event).toMatchObject({
+      type: 'VoiceSessionGranted', principalId: principal('web', alice), clientId: 'web', userId: alice,
+      documentId: first.doc, requestId: first.requestId,
+    });
+
+    const bobResponse = await post('user-bob-one', bob);
+    expect(bobResponse.response.status).toBe(201);
+    const bobSession = { doc: bobResponse.doc, ...(await bobResponse.response.json() as { sessionId: string }) };
+    const otherKey = 'runtime-quota-key-not-for-production';
+    const otherResponse = await post('user-alice-other-app', alice, otherKey);
+    expect(otherResponse.response.status).toBe(201);
+    const otherSession = { doc: otherResponse.doc, ...(await otherResponse.response.json() as { sessionId: string }) };
+    expect((await (await room(otherSession.doc)).inspect(otherSession.sessionId)).snapshot).toMatchObject({
+      principalId: principal('quota', alice), clientId: 'quota', userId: alice,
+    });
+    expect(principal('quota', alice)).not.toBe(principal('web', alice));
+
+    await mf.dispose();
+    mf = new Miniflare(convertV4MiniflareOptions(options));
+    await mf.ready;
+    expect((await (await room(first.doc)).inspect(first.sessionId)).snapshot).toEqual(stored.snapshot);
+    expect(await (await room(first.doc)).audit(first.sessionId)).toEqual(audit);
+    const blocked = await post('user-alice-after-restart', alice);
+    expect(blocked.response.status).toBe(429);
+    await blocked.response.text();
+    for (const [method, suffix] of [['GET', ''], ['POST', '/grants'], ['DELETE', '']] as const) {
+      const response = await mf.dispatchFetch(`${endpoint(first)}${suffix}`, { method, headers: userHeaders(bob) });
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ code: 'NOT_FOUND' });
+    }
+    const renewalId = crypto.randomUUID();
+    const renewed = await mf.dispatchFetch(`${endpoint(bobSession)}/grants`, { method: 'POST', headers: userHeaders(bob, clientKey, renewalId) });
+    expect(renewed.status).toBe(201);
+    await renewed.text();
+    expect((await (await room(bobSession.doc)).audit(bobSession.sessionId)).events.at(-1)!.event).toMatchObject({
+      type: 'VoiceSessionGrantRenewed', principalId: principal('web', bob), clientId: 'web', userId: bob, requestId: renewalId,
+    });
+    expect((await mf.dispatchFetch(endpoint(bobSession), { method: 'DELETE', headers: userHeaders(bob) })).status).toBe(204);
+    const endId = crypto.randomUUID();
+    expect((await mf.dispatchFetch(endpoint(first), { method: 'DELETE', headers: userHeaders(alice, clientKey, endId) })).status).toBe(204);
+    const endedAudit = await (await room(first.doc)).audit(first.sessionId);
+    expect(endedAudit.events.at(-1)!.event).toMatchObject({
+      type: 'VoiceSessionEnded', principalId: principal('web', alice), clientId: 'web', userId: alice, requestId: endId,
+    });
+    const released = await post('user-alice-slot-released', alice);
+    expect(released.response.status).toBe(201);
+    const replacement = { doc: released.doc, ...(await released.response.json() as { sessionId: string }) };
+    await Promise.all([...admitted.slice(1), replacement].map(async row => {
+      expect((await mf.dispatchFetch(endpoint(row), { method: 'DELETE', headers: userHeaders(alice) })).status).toBe(204);
+    }));
+    expect((await mf.dispatchFetch(endpoint(otherSession), { method: 'DELETE', headers: userHeaders(alice, otherKey) })).status).toBe(204);
+  });
+  it('recovers a persisted usage outbox through the alarm and deduplicates acknowledged replay', async () => {
+    const doc = 'outbox-recovery';
+    const response = await mf.dispatchFetch(`https://voice.test/v1/documents/${doc}/voice-sessions`, {
+      method: 'POST', headers: { ...headers, 'x-vdoc-user-id': 'outbox-user', 'x-request-id': 'outbox-create' },
+    });
+    expect(response.status).toBe(201);
+    const { sessionId } = await response.json() as { sessionId: string };
+    const stub = await room(doc);
+    const snapshot = (await stub.inspect(sessionId)).snapshot!;
+    const pending = {
+      type: 'TurnCompleted', aggregateId: sessionId, occurredAt: Date.now(), turnId: 'delivered-turn', toolCalls: 0,
+      eventId: `${sessionId}:event:99`, settlementId: `${sessionId}:turn:delivered-turn`, usageUnit: 'turn', usageDelta: 1,
+      principalId: snapshot.principalId, clientId: snapshot.clientId!, userId: snapshot.userId!, documentId: doc, requestId: 'outbox-create',
+    };
+    const unacknowledged = { ...snapshot, usage: { ...snapshot.usage, turns: 1 }, completedTurnIds: ['delivered-turn'], pendingAuditEvents: [pending], nextAuditSequence: 100 };
+    await stub.seed(unacknowledged);
+    await expect.poll(async () => (await stub.inspect(sessionId)).snapshot?.pendingAuditEvents, { timeout: 5000 }).toEqual([]);
+    expect((await stub.audit(sessionId)).events.filter(row => row.event.type === 'TurnCompleted')).toHaveLength(1);
+    // Simulate crash after sink commit but before acknowledgement persisted.
+    await stub.seed(unacknowledged);
+    await expect.poll(async () => (await stub.inspect(sessionId)).snapshot?.pendingAuditEvents, { timeout: 5000 }).toEqual([]);
+    expect((await stub.audit(sessionId)).events.filter(row => row.event.type === 'TurnCompleted')).toHaveLength(1);
+    expect((await stub.inspect(sessionId)).snapshot?.usage.turns).toBe(1);
+  });
   it('reclaims expired principal leases and hourly records through the quota alarm', async () => {
     const url = 'https://voice.test/v1/documents/quota-alarm/voice-sessions?__quota=alarm-only';
     const response = await mf.dispatchFetch(url, { method: 'POST', body: JSON.stringify({

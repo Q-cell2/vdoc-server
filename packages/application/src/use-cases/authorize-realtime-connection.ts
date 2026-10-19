@@ -1,7 +1,7 @@
 import { DocumentId, VoiceSessionId, err, ok, type Result } from '@vdoc-server/domain';
 import { appError, fromDomain, type AppError } from '../errors';
 import type { Clock, GrantSigner } from '../ports';
-import type { VoiceSessionStore } from '../voice-session-store';
+import { QuotaUnavailable, quotaUnavailable, type VoiceSessionStore } from '../voice-session-store';
 
 export interface AuthorizeRealtimeConnectionInput {
   /** `hello.auth` from the realtime client. */
@@ -35,7 +35,7 @@ export class AuthorizeRealtimeConnection {
     if (!authorized.ok) return err(fromDomain(authorized.error));
 
     const session = await store.findById(sessionId.value);
-    if (!session || !session.isOwnedBy(grant.principalId)) return err(appError('GRANT_INVALID', 'A valid session grant is required.'));
+    if (!session || session.documentId !== documentId.value || !session.isOwnedBy(grant.principalId)) return err(appError('GRANT_INVALID', 'A valid session grant is required.'));
     const connected = session.connect(now);
     if (!connected.ok) {
       session.expireIfOverdue(now);
@@ -44,7 +44,11 @@ export class AuthorizeRealtimeConnection {
     }
     const reserved = await store.reserveQuota(session);
     if (!reserved.ok) return reserved;
-    await store.commit(session);
+    try { await store.commit(session); }
+    catch (error) {
+      if (error instanceof QuotaUnavailable) return err(quotaUnavailable());
+      throw error;
+    }
     return ok({ sessionId: session.id, documentId: session.documentId, principalId: session.principalId, profileId: session.profileId });
   }
 }

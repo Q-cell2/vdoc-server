@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TurnId, VoiceSession } from '../src';
+import { ToolCallId, TurnId, VoiceSession } from '../src';
 import { activeSession, grantedSession, principal } from './fixtures';
 
 describe('VoiceSession lifecycle', () => {
@@ -54,4 +54,19 @@ describe('VoiceSession lifecycle', () => {
     expect(copy.toSnapshot()).toEqual(session.toSnapshot());
     expect(copy.pullEvents()).toEqual([]);
   });
+  it('persists completion idempotency across restore and bounds unconnected renewal', () => {
+    const session = activeSession(0, { maxTurns: 3 });
+    session.completeTurn(TurnId.assume('same'), 1);
+    session.recordToolResult({ id: ToolCallId.assume('call'), name: 'read_document', turnId: TurnId.assume('same') }, { ok: true }, 2);
+    const restored = VoiceSession.restore(structuredClone(session.toSnapshot()));
+    restored.completeTurn(TurnId.assume('same'), 3);
+    restored.recordToolResult({ id: ToolCallId.assume('call'), name: 'read_document', turnId: TurnId.assume('same') }, { ok: true }, 4);
+    expect(restored.usage.turns).toBe(1);
+    expect(restored.pullEvents()).toEqual([]);
+    const pending = grantedSession(0, { grantTtlMs: 1000, maxDurationMs: 1500 });
+    expect(pending.issueGrant(900).ok).toBe(true);
+    expect(pending.toSnapshot().connectDeadline).toBe(1500);
+    expect(pending.issueGrant(1501).ok).toBe(false);
+  });
+
 });

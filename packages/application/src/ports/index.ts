@@ -19,9 +19,11 @@ export interface GrantSigner {
 /** What the caller presented, as the edge received it. */
 export interface CallerCredentials {
   readonly bearer: string | undefined;
+  readonly trustedUserId?: string;
+  readonly requestId?: string;
 }
 
-/** Strategy: API keys today, user sign-in later. Returns `undefined` when not authenticated. */
+/** Verifies the service credential before accepting its trusted user assertion. */
 export interface CallerAuthenticator {
   authenticate(credentials: CallerCredentials): Promise<Principal | undefined>;
 }

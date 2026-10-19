@@ -1,7 +1,7 @@
 import { err, ok, type Result } from '@vdoc-server/domain';
 import { fromDomain, type AppError } from '../errors';
 import type { CallerAuthenticator, CallerCredentials, Clock, GrantSigner } from '../ports';
-import type { VoiceSessionStore } from '../voice-session-store';
+import { QuotaUnavailable, quotaUnavailable, type VoiceSessionStore } from '../voice-session-store';
 import { authenticateCaller } from './caller';
 import type { GrantView } from './views';
 
@@ -29,9 +29,14 @@ export class RenewSessionGrant {
       return err(fromDomain(grant.error));
     }
     const token = await signer.sign(grant.value);
-    const reserved = await store.reserveQuota(session.value);
+    const reserved = await store.reserveQuota(session.value, [], input.credentials.requestId);
     if (!reserved.ok) return reserved;
-    await store.commit(session.value);
+    session.value.recordGrantRenewal(now);
+    try { await store.commit(session.value, input.credentials.requestId); }
+    catch (error) {
+      if (error instanceof QuotaUnavailable) return err(quotaUnavailable());
+      throw error;
+    }
     return ok({ token, expiresAt: grant.value.expiresAt });
   }
 }

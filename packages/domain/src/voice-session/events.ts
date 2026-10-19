@@ -10,6 +10,7 @@ export interface VoiceSessionGranted extends DomainEvent<'VoiceSessionGranted'> 
   readonly principalId: string;
   readonly profileId: string;
 }
+export interface VoiceSessionGrantRenewed extends DomainEvent<'VoiceSessionGrantRenewed'> {}
 export interface VoiceSessionConnected extends DomainEvent<'VoiceSessionConnected'> {
   readonly reconnect: boolean;
 }
@@ -50,6 +51,7 @@ export interface VoiceSessionEnded extends DomainEvent<'VoiceSessionEnded'> {
 
 export type VoiceSessionEvent =
   | VoiceSessionGranted
+  | VoiceSessionGrantRenewed
   | VoiceSessionConnected
   | ToolCallReviewed
   | ToolCallCompleted

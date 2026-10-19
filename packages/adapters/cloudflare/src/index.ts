@@ -81,12 +81,20 @@ export class DurableObjectVoiceSessionRepository implements VoiceSessionReposito
     return ids;
   }
 
+  async findPendingPublications(): Promise<string[]> {
+    const ids: string[] = [];
+    for await (const rows of this.#pages(this.storage)) {
+      for (const row of rows.values()) if (row.pendingAuditEvents?.length) ids.push(row.id);
+    }
+    return ids;
+  }
+
   /** Called by the alarm in the same command queue as HTTP and WebSocket commands. */
   async pruneAndSchedule(): Promise<void> {
     await this.storage.transaction(async (tx) => {
       const cutoff = this.now() - this.retainEndedMs;
       for await (const rows of this.#pages(tx)) {
-        const stale = [...rows].filter(([, row]) => row.status === 'ended' && row.endedAt !== null && row.endedAt < cutoff).map(([key]) => key);
+        const stale = [...rows].filter(([, row]) => row.status === 'ended' && row.endedAt !== null && row.endedAt < cutoff && !row.pendingAuditEvents?.length).map(([key]) => key);
         if (stale.length > 0) await tx.delete(stale);
       }
       const next = await this.#nextDeadline(tx);
@@ -96,6 +104,13 @@ export class DurableObjectVoiceSessionRepository implements VoiceSessionReposito
   }
 
   #deadline(row: VoiceSessionSnapshot): number | undefined {
+    if (row.pendingAuditEvents?.length) return row.status === 'ended'
+      ? this.now() + 30_000
+      : Math.min(this.now() + 30_000, this.#sessionDeadline(row) ?? Infinity);
+    return this.#sessionDeadline(row);
+  }
+
+  #sessionDeadline(row: VoiceSessionSnapshot): number | undefined {
     if (row.status === 'granted') return row.connectDeadline + 1; // Domain grants are open at the deadline itself.
     if (row.status === 'active' && row.startedAt !== null) return row.startedAt + row.limits.maxDurationMs;
     if (row.status === 'ended' && row.endedAt !== null) return row.endedAt + this.retainEndedMs + 1;

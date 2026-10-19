@@ -1,6 +1,6 @@
 import { HttpApi } from '@vdoc-server/adapter-http';
 import { InMemoryAgentProfileRepository, InMemoryPrincipalQuotaStore } from '@vdoc-server/adapter-memory';
-import { ApiKeyAuthenticator, HmacGrantSigner } from '@vdoc-server/adapter-security';
+import { ApiKeyAuthenticator, HmacGrantSigner, TrustedUserAuthenticator } from '@vdoc-server/adapter-security';
 import { AuditLogPublisher, CompositeEventPublisher, JsonLogger, RandomIdGenerator, TurnMetricsPublisher, systemClock } from '@vdoc-server/adapter-system';
 import { RealtimeHost, type ModelRegistry, type Scheduler } from '@vdoc-server/adapter-vrt';
 import { createApplication, type Application, type Clock, type CommandRunner, type EventPublisher, type PrincipalQuotaStore } from '@vdoc-server/application';
@@ -41,7 +41,7 @@ export async function createServer(parts: ServerParts): Promise<Server> {
 
   const profile = editingAssistantProfile(config.model, config.limits);
   const profiles = new InMemoryAgentProfileRepository([profile], ProfileId.assume(profile.id));
-  const [signer, authenticator] = await Promise.all([HmacGrantSigner.create(config.signingKeys), ApiKeyAuthenticator.create(config.clients)]);
+  const [signer, applications] = await Promise.all([HmacGrantSigner.create(config.signingKeys), ApiKeyAuthenticator.create(config.clients)]);
 
   let application: Application | undefined;
   const realtime = new RealtimeHost({
@@ -55,12 +55,20 @@ export async function createServer(parts: ServerParts): Promise<Server> {
     ...parts.realtime,
   });
 
+  // Workers provide a per-document runner. Node serializes this process's commands,
+  // including fire-and-forget SDK callbacks, so read/modify/save cannot lose usage.
+  let commandTail: Promise<unknown> = Promise.resolve();
+  const runCommand: CommandRunner = parts.runCommand ?? ((command) => {
+    const next = commandTail.then(command);
+    commandTail = next.catch(() => undefined);
+    return next;
+  });
   application = createApplication({
     sessions: parts.sessions,
     quotas: parts.quotas ?? new InMemoryPrincipalQuotaStore(config.quotas, () => (parts.clock ?? systemClock).now()),
-    ...(parts.runCommand ? { runCommand: parts.runCommand } : {}),
+    runCommand,
     profiles,
-    authenticator,
+    authenticator: new TrustedUserAuthenticator(applications, config.allowClientOnly),
     signer,
     clock: parts.clock ?? systemClock,
     ids: new RandomIdGenerator(),
