@@ -56,7 +56,7 @@ export function createApplication(deps: ApplicationDependencies): Application {
     endVoiceSession: new EndVoiceSession({ store, authenticator, clock }),
     resolveRealtimeRoute: new ResolveRealtimeRoute({ store, profiles, clock }),
     authorizeRealtimeConnection: new AuthorizeRealtimeConnection({ store, signer, clock }),
-    configureRealtimeSession: new ConfigureRealtimeSession({ store, profiles }),
+    configureRealtimeSession: new ConfigureRealtimeSession({ store, profiles, clock }),
     reviewToolCall: new ReviewToolCall({ store, profiles, policy: deps.toolPolicy, assessor: deps.riskAssessor, clock }),
     recordToolResult: new RecordToolResult({ store, clock }),
     completeTurn: new CompleteTurn({ store, clock }),
