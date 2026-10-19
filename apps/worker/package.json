@@ -18,7 +18,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20260515.1",
-    "@vrealtime/client": "0.1.0",
+    "@vrealtime/client": "0.2.0",
     "wrangler": "4.151.0"
   }
 }
