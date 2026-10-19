@@ -146,6 +146,8 @@ npm run check
 
 依次执行类型检查（Node 与 Workers 两套）、架构依赖检查和全部测试。
 
+轮次延迟、工具审查与执行结果会输出为带 `metrics: true` 的 JSON 指标日志，字段与采集边界见 [语音指标](docs/METRICS.md)。
+
 ## 包结构
 
 ```
