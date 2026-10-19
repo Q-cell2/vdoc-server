@@ -18,8 +18,8 @@
   },
   "devDependencies": {
     "@types/ws": "8.18.1",
-    "@vrealtime/client": "0.1.0",
-    "@vrealtime/testing": "0.1.0",
+    "@vrealtime/client": "0.2.0",
+    "@vrealtime/testing": "0.2.0",
     "tsx": "4.20.6"
   }
 }
