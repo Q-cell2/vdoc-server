@@ -5,9 +5,9 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "durable_objects": {
-    "bindings": [{ "name": "VOICE_ROOMS", "class_name": "DocumentVoiceRoom" }]
+    "bindings": [{ "name": "VOICE_ROOMS", "class_name": "DocumentVoiceRoom" }, { "name": "PRINCIPAL_QUOTAS", "class_name": "PrincipalQuotaRoom" }]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DocumentVoiceRoom"] }],
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DocumentVoiceRoom"] }, { "tag": "v2", "new_sqlite_classes": ["PrincipalQuotaRoom"] }],
   "vars": {
     "VDOC_SERVER_ENV": "production",
     "VDOC_SERVER_MODEL": "boson",
@@ -17,7 +17,7 @@
   // Preview its own namespace for this locally defined Durable Object class.
   "previews": {
     "durable_objects": {
-      "bindings": [{ "name": "VOICE_ROOMS", "class_name": "DocumentVoiceRoom" }]
+      "bindings": [{ "name": "VOICE_ROOMS", "class_name": "DocumentVoiceRoom" }, { "name": "PRINCIPAL_QUOTAS", "class_name": "PrincipalQuotaRoom" }]
     },
     "vars": {
       // Keep production validation/authentication enabled in public Previews.

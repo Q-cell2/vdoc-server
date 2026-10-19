@@ -1,10 +1,10 @@
 import {
   AgentProfile, DocumentSessionPolicy, InstructionTemplate, PrincipalId, ProfileId, RiskAssessor, SessionGrant, SessionLimits,
-  VoiceSession, defaultToolPolicy,
+  VoiceSession, PrincipalQuota, ok, defaultToolPolicy,
   type AgentProfileRepository, type DocumentId, type DomainEvent, type EndReason, type Principal, type VoiceSessionId,
-  type VoiceSessionRepository, type VoiceSessionSnapshot,
+  type VoiceSessionRepository, type VoiceSessionSnapshot, type PrincipalQuotaLimits, type PrincipalQuotaState, type QuotaReservation,
 } from '@vdoc-server/domain';
-import { createApplication, type CommandRunner, type CallerAuthenticator, type CallerCredentials, type Clock, type EventPublisher, type GrantSigner, type IdGenerator, type RealtimeConnections } from '../src';
+import { createApplication, type CommandRunner, type CallerAuthenticator, type CallerCredentials, type Clock, type EventPublisher, type GrantSigner, type IdGenerator, type PrincipalQuotaStore, type RealtimeConnections } from '../src';
 
 export class FakeClock implements Clock {
   constructor(public time = 1_000) {}
@@ -74,18 +74,33 @@ export function testProfile(limits: Partial<SessionLimits> = {}): AgentProfile {
   });
 }
 
-export function harness(options: { limits?: Partial<SessionLimits>; concurrency?: 'supersede' | 'reject'; runCommand?: CommandRunner } = {}) {
+export class TestQuotas implements PrincipalQuotaStore {
+  readonly states = new Map<string, PrincipalQuotaState>();
+  constructor(private readonly policy: PrincipalQuota, private readonly clock: Clock) {}
+  async reserve(input: QuotaReservation) {
+    const result = this.policy.reserve(this.states.get(input.principalId) ?? PrincipalQuota.empty, input, this.clock.now());
+    if (!result.ok) return result;
+    this.states.set(input.principalId, result.value);
+    return ok(undefined);
+  }
+  async release(principalId: string, sessionId: string) {
+    this.states.set(principalId, this.policy.release(this.states.get(principalId) ?? PrincipalQuota.empty, sessionId, this.clock.now()));
+  }
+}
+
+export function harness(options: { limits?: Partial<SessionLimits>; quotaLimits?: PrincipalQuotaLimits; signer?: GrantSigner; concurrency?: 'supersede' | 'reject'; runCommand?: CommandRunner } = {}) {
   const clock = new FakeClock();
   const repository = new MapRepository();
   const events = new EventLog();
   const connections = new Connections();
+  const quotas = new TestQuotas(new PrincipalQuota(options.quotaLimits ?? PrincipalQuota.defaults), clock);
   const app = createApplication({
     ...(options.runCommand ? { runCommand: options.runCommand } : {}),
-    sessions: repository, profiles: new Profiles(testProfile(options.limits)), authenticator: new FakeAuthenticator(), signer: new FakeSigner(),
+    sessions: repository, quotas, profiles: new Profiles(testProfile(options.limits)), authenticator: new FakeAuthenticator(), signer: options.signer ?? new FakeSigner(),
     clock, ids: new SequentialIds(), events, connections, admission: new DocumentSessionPolicy(options.concurrency ?? 'supersede'),
     toolPolicy: defaultToolPolicy(), riskAssessor: new RiskAssessor(),
   });
-  return { app, clock, repository, events, connections };
+  return { app, clock, repository, events, connections, quotas };
 }
 
 /** Grants and connects a session for Alice; returns its ids and token. */

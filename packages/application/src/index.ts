@@ -14,3 +14,4 @@ export { ResolveRealtimeRoute, type RealtimeRoute } from './use-cases/resolve-re
 export { ReviewToolCall, type ToolCallInput } from './use-cases/review-tool-call';
 export type { GrantView, VoiceSessionView } from './use-cases/views';
 export { VoiceSessionStore } from './voice-session-store';
+export type { PrincipalQuotaStore } from './ports';

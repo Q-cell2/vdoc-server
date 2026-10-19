@@ -1,9 +1,9 @@
 import { HttpApi } from '@vdoc-server/adapter-http';
-import { InMemoryAgentProfileRepository } from '@vdoc-server/adapter-memory';
+import { InMemoryAgentProfileRepository, InMemoryPrincipalQuotaStore } from '@vdoc-server/adapter-memory';
 import { ApiKeyAuthenticator, HmacGrantSigner } from '@vdoc-server/adapter-security';
 import { AuditLogPublisher, CompositeEventPublisher, JsonLogger, RandomIdGenerator, systemClock } from '@vdoc-server/adapter-system';
 import { RealtimeHost, type ModelRegistry, type Scheduler } from '@vdoc-server/adapter-vrt';
-import { createApplication, type Application, type Clock, type CommandRunner, type EventPublisher } from '@vdoc-server/application';
+import { createApplication, type Application, type Clock, type CommandRunner, type EventPublisher, type PrincipalQuotaStore } from '@vdoc-server/application';
 import { editingAssistantProfile, type ServerConfig } from '@vdoc-server/config';
 import { DocumentSessionPolicy, ProfileId, RiskAssessor, defaultToolPolicy, type VoiceSessionRepository } from '@vdoc-server/domain';
 
@@ -11,6 +11,7 @@ import { DocumentSessionPolicy, ProfileId, RiskAssessor, defaultToolPolicy, type
 export interface ServerParts {
   readonly config: ServerConfig;
   readonly sessions: VoiceSessionRepository;
+  readonly quotas?: PrincipalQuotaStore;
   readonly runCommand?: CommandRunner;
   readonly models: ModelRegistry;
   readonly logger?: JsonLogger;
@@ -56,6 +57,7 @@ export async function createServer(parts: ServerParts): Promise<Server> {
 
   application = createApplication({
     sessions: parts.sessions,
+    quotas: parts.quotas ?? new InMemoryPrincipalQuotaStore(config.quotas, () => (parts.clock ?? systemClock).now()),
     ...(parts.runCommand ? { runCommand: parts.runCommand } : {}),
     profiles,
     authenticator,

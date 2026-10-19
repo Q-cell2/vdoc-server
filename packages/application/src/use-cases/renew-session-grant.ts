@@ -29,6 +29,8 @@ export class RenewSessionGrant {
       return err(fromDomain(grant.error));
     }
     const token = await signer.sign(grant.value);
+    const reserved = await store.reserveQuota(session.value);
+    if (!reserved.ok) return reserved;
     await store.commit(session.value);
     return ok({ token, expiresAt: grant.value.expiresAt });
   }

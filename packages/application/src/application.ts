@@ -1,5 +1,5 @@
 import type { AgentProfileRepository, DocumentSessionPolicy, RiskAssessor, ToolPolicy, VoiceSessionRepository } from '@vdoc-server/domain';
-import type { CallerAuthenticator, Clock, EventPublisher, GrantSigner, IdGenerator, RealtimeConnections } from './ports';
+import type { CallerAuthenticator, Clock, EventPublisher, GrantSigner, IdGenerator, PrincipalQuotaStore, RealtimeConnections } from './ports';
 import { AuthorizeRealtimeConnection } from './use-cases/authorize-realtime-connection';
 import { CompleteTurn } from './use-cases/complete-turn';
 import { ConfigureRealtimeSession } from './use-cases/configure-realtime-session';
@@ -19,6 +19,7 @@ export interface ApplicationDependencies {
   /** Runtime scope decides which commands must run sequentially (one document on Workers). */
   readonly runCommand?: CommandRunner;
   readonly sessions: VoiceSessionRepository;
+  readonly quotas: PrincipalQuotaStore;
   readonly profiles: AgentProfileRepository;
   readonly authenticator: CallerAuthenticator;
   readonly signer: GrantSigner;
@@ -47,7 +48,7 @@ export interface Application {
 
 /** Factory: wires use cases to their ports. Composition roots call this once. */
 export function createApplication(deps: ApplicationDependencies): Application {
-  const store = new VoiceSessionStore(deps.sessions, deps.events, deps.connections);
+  const store = new VoiceSessionStore(deps.sessions, deps.events, deps.connections, deps.quotas);
   const { profiles, authenticator, signer, clock, ids, admission } = deps;
   const app: Application = {
     grantVoiceSession: new GrantVoiceSession({ store, profiles, authenticator, signer, clock, ids, admission }),
