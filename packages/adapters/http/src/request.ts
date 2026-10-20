@@ -18,6 +18,8 @@ export type JsonBody =
 
 /** Optional JSON object body, bounded in size. An empty body is `{}`. */
 export async function readJsonObject(request: Request, maxBytes = 4096): Promise<JsonBody> {
+  // Refuse a declared oversized body before buffering it.
+  if (Number(request.headers.get('content-length') ?? 0) > maxBytes) return { ok: false, status: 413, message: 'The request body is too large.' };
   const text = await request.text();
   if (text.length === 0) return { ok: true, value: {} };
   if (new TextEncoder().encode(text).length > maxBytes) return { ok: false, status: 413, message: 'The request body is too large.' };
