@@ -4,6 +4,9 @@
   "name": "vdoc-server",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
+  // Workers Logs: the JSON log lines and each request's invocation log. A deploy applies this, so a
+  // dashboard toggle alone is switched off again by the next Workers Builds deploy.
+  "observability": { "logs": { "enabled": true, "invocation_logs": true } },
   "durable_objects": {
     "bindings": [{ "name": "VOICE_ROOMS", "class_name": "DocumentVoiceRoom" }, { "name": "PRINCIPAL_QUOTAS", "class_name": "PrincipalQuotaRoom" }]
   },
