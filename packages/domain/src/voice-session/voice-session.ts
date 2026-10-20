@@ -16,10 +16,12 @@ import { Usage } from './usage';
 export type VoiceSessionStatus = 'granted' | 'active' | 'ended';
 export type SessionError = DomainError<'SESSION_CLOSED'>;
 
-/** A destructive request the user was asked about, and the turn in which it was asked. */
+/** A destructive request the user was asked about, the turn in which it was asked, and how much user input there had been by then. */
 export interface PendingConfirmation {
   readonly fingerprint: string;
   readonly turnId: string;
+  /** Absent in snapshots written before this field existed; such confirmations are asked again. */
+  readonly userInputs?: number;
 }
 
 /** Plain, serialisable state (Memento). Repositories store this, never the object. */
@@ -139,7 +141,12 @@ export class VoiceSession extends AggregateRoot<VoiceSessionEvent> {
     return ok({ reconnect });
   }
 
-  reviewToolCall(call: ToolCall, governance: ToolGovernance, now: number): ToolDecision {
+  /**
+   * `userInputs` counts the user's committed utterances and text messages in this session so far.
+   * A turn can start without the user (a late tool result, a model-initiated response), so a
+   * confirmation is consumed only once the user has given input since it was asked.
+   */
+  reviewToolCall(call: ToolCall, governance: ToolGovernance, now: number, userInputs: number): ToolDecision {
     const cached = this.state.toolDecisions && Object.hasOwn(this.state.toolDecisions, call.id) ? this.state.toolDecisions[call.id] : undefined;
     if (cached && this.state.status === 'active' && this.isOpenAt(now)) {
       if (cached.fingerprint === fingerprint(call) && cached.turnId === call.turnId) return cached.decision;
@@ -151,14 +158,15 @@ export class VoiceSession extends AggregateRoot<VoiceSessionEvent> {
       decision = { kind: 'deny', risk: assessment.risk, code: 'SESSION_CLOSED', message: 'This voice session has ended.' };
     } else {
       const print = fingerprint(call);
-      const confirmedInEarlierTurn = this.state.pendingConfirmations.some((p) => p.fingerprint === print && p.turnId !== call.turnId);
+      const confirmedInEarlierTurn = this.state.pendingConfirmations.some((p) =>
+        p.fingerprint === print && p.turnId !== call.turnId && userInputs > (p.userInputs ?? Infinity));
       decision = governance.policy.review({
         call, assessment, allowedTools: governance.allowedTools, limits: this.state.limits,
         callsSoFarInTurn: Usage.callsSoFar(this.state.usage, call.turnId), confirmedInEarlierTurn,
       });
       const others = this.state.pendingConfirmations.filter((p) => p.fingerprint !== print);
       const pendingConfirmations = decision.kind === 'confirm'
-        ? [...others, { fingerprint: print, turnId: call.turnId }].slice(-MAX_PENDING_CONFIRMATIONS)
+        ? [...others, { fingerprint: print, turnId: call.turnId, userInputs }].slice(-MAX_PENDING_CONFIRMATIONS)
         : decision.kind === 'allow' && confirmedInEarlierTurn ? others : this.state.pendingConfirmations;
       this.state = { ...this.state, usage: Usage.withToolCall(this.state.usage, call.turnId), pendingConfirmations };
     }

@@ -101,7 +101,7 @@ describe('ReviewToolCall, RecordToolResult and CompleteTurn', () => {
     expect(h.repository.rows.get(sessionId)?.status).toBe('ended');
     expect(h.connections.closed).toEqual([{ sessionId, reason: 'disconnected' }]);
   });
-  const call = (sessionId: string, name: string, args: unknown = {}, turnId = 't1') => ({ sessionId, callId: `c-${Math.random().toString(36).slice(2)}`, name, arguments: args, turnId });
+  const call = (sessionId: string, name: string, args: unknown = {}, turnId = 't1') => ({ sessionId, callId: `c-${Math.random().toString(36).slice(2)}`, name, arguments: args, turnId, userInputs: 0 });
 
   it('reviews calls against the profile and keeps a content-free audit trail', async () => {
     const h = harness();
@@ -112,6 +112,16 @@ describe('ReviewToolCall, RecordToolResult and CompleteTurn', () => {
     await h.app.recordToolResult.execute({ sessionId, callId: 'c1', name: 'read_document', turnId: 't1', ok: true });
     expect(h.events.types()).toContain('ToolCallCompleted');
     expect(JSON.stringify(h.events.events)).not.toContain('secret text');
+  });
+
+  it('consumes a destructive-edit confirmation only after new user input, treating bad counts as none', async () => {
+    const h = harness();
+    const { sessionId } = await connected(h);
+    const destructive = (turnId: string, userInputs: number) => ({ ...call(sessionId, 'apply_document_operations', { operations: [{ type: 'block.delete', id: 'b1' }] }, turnId), userInputs });
+    expect(await h.app.reviewToolCall.execute(destructive('t1', 1))).toMatchObject({ kind: 'confirm' });
+    expect(await h.app.reviewToolCall.execute(destructive('t2', 1))).toMatchObject({ kind: 'confirm' });
+    expect(await h.app.reviewToolCall.execute(destructive('t3', Number.NaN))).toMatchObject({ kind: 'confirm' });
+    expect(await h.app.reviewToolCall.execute(destructive('t4', 2))).toEqual({ kind: 'allow', risk: 'high' });
   });
 
   it('denies calls for unknown or ended sessions', async () => {

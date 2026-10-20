@@ -29,7 +29,7 @@ describe('durable usage audit delivery', () => {
       expect(h.repository.rows.get(sessionId)?.usage.turns).toBe(1);
       expect(h.events.events.filter(event => event.type === 'TurnCompleted')).toHaveLength(1);
       const input = call(sessionId);
-      expect(await server.application.reviewToolCall.execute({ ...input, arguments: {} })).toMatchObject({ kind: 'allow' });
+      expect(await server.application.reviewToolCall.execute({ ...input, arguments: {}, userInputs: 0 })).toMatchObject({ kind: 'allow' });
       await Promise.all([
         server.application.recordToolResult.execute({ ...input, ok: true }),
         server.application.completeTurn.execute({ sessionId, turnId: input.turnId }),
@@ -64,7 +64,7 @@ describe('durable usage audit delivery', () => {
     const h = harness();
     const { sessionId } = await connected(h);
     const input = call(sessionId);
-    expect(await h.app.reviewToolCall.execute({ ...input, arguments: {} })).toMatchObject({ kind: 'allow' });
+    expect(await h.app.reviewToolCall.execute({ ...input, arguments: {}, userInputs: 0 })).toMatchObject({ kind: 'allow' });
     vi.spyOn(h.events, 'publish').mockRejectedValueOnce(new Error('audit unavailable'));
     await expect(h.app.recordToolResult.execute({ ...input, ok: true })).rejects.toThrow('audit unavailable');
     expect(h.repository.rows.get(sessionId)?.usage.toolCalls).toBe(1);
@@ -110,7 +110,7 @@ describe('durable usage audit delivery', () => {
     const h = harness();
     const { sessionId } = await connected(h);
     const input = call(sessionId);
-    expect(await h.app.reviewToolCall.execute({ ...input, arguments: {} })).toMatchObject({ kind: 'allow' });
+    expect(await h.app.reviewToolCall.execute({ ...input, arguments: {}, userInputs: 0 })).toMatchObject({ kind: 'allow' });
     await h.app.endVoiceSession.bySystem(sessionId, 'disconnected');
     const usage = structuredClone(h.repository.rows.get(sessionId)!.usage);
     vi.spyOn(h.events, 'publish').mockRejectedValueOnce(new Error('audit unavailable'));
