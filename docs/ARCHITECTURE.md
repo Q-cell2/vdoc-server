@@ -10,7 +10,7 @@ vdoc-server 是 vdoc 的语音会话服务端。它负责：谁能对哪篇文�
 |---|---|
 | 文档（Document） | vdoc 里的一篇文档，用 `documentId` 标识。服务端只知道它的 id |
 | 语音会话（Voice Session） | 一个主体就一篇文档与语音 Agent 交谈的一段时间。聚合根 |
-| 主体（Principal） | 申请会话的一方。现在是持有 API key 的 vdoc 安装（client），以后加用户（user） |
+| 主体（Principal） | 申请会话的一方：经 vdoc BFF 认证的登录用户（user），或在允许纯 client 鉴权时持有 API key 的 vdoc 安装（client） |
 | 会话授权（Session Grant） | 短期有效、只针对一个会话和一篇文档的连接许可；签名令牌只是它的编码 |
 | Agent 配置（Agent Profile） | Agent 怎么工作：指令模板、模型、音色、允许的工具、会话限额 |
 | 工具调用（Tool Call） | 模型请求 App 执行一个工具，执行前要经过工具策略审查 |
@@ -76,7 +76,7 @@ vdoc-server 是 vdoc 的语音会话服务端。它负责：谁能对哪篇文�
 | `@vdoc-server/domain` | 领域 | 四个上下文的模型；零依赖 |
 | `@vdoc-server/application` | 应用 | 用例（命令和查询）、端口接口、错误码、`VoiceSessionStore` 应用服务 |
 | `@vdoc-server/config` | 配置 | 环境变量 → 校验后的 `ServerConfig`（启动时一次性报告所有问题）；内置的编辑助手配置 |
-| `@vdoc-server/adapter-security` | 适配器 | HMAC-SHA-256 会话授权（支持换钥）、API key 鉴权（只存摘要，恒定时间比较） |
+| `@vdoc-server/adapter-security` | 适配器 | HMAC-SHA-256 会话授权（支持换钥）、API key 鉴权（只存摘要，恒定时间比较）、可信用户鉴权（client key 通过后采信 BFF 的用户头） |
 | `@vdoc-server/adapter-vrt` | 适配器 | 接入 vRealTime：模型注册表、每会话一个 Hub、hooks 接到用例、生命周期装饰器、开发用假模型 |
 | `@vdoc-server/adapter-http` | 适配器 | 基于 Web 标准 `Request`/`Response` 的路由、控制器、CORS、problem+json |
 | `@vdoc-server/adapter-memory` | 适配器 | 内存仓储和测试替身 |
@@ -140,7 +140,7 @@ vdoc（浏览器）                 vdoc-server                                 
 | 换或加一个模型（如 cascade：语音识别 + Claude + TTS） | 在 `adapter-vrt/src/providers/` 加一个 `ModelProvider`，在 `createModelRegistry` 里注册；配置里加一个 provider 名 |
 | 加一条工具规则（比如工作时间外禁止删除） | 在 `domain/src/tool-governance/rules/` 实现 `ToolRule`，用 `defaultToolPolicy().with(rule)` 组装 |
 | 调整风险分级 | 改 `VDOC_RISK_TABLE`（纯数据） |
-| 用户登录鉴权 | 新写一个 `CallerAuthenticator`（比如校验 JWT），在组合根替换 |
+| 换一种用户鉴权（比如直接校验身份提供方的 JWT，替代 BFF 用户头） | 新写一个 `CallerAuthenticator`，在组合根替换 `TrustedUserAuthenticator` |
 | 换存储（Postgres、D1） | 实现 `VoiceSessionRepository`，用快照存取 |
 | 加审计或指标去向 | 实现 `EventPublisher`，通过 `createServer({ subscribers })` 传入 |
 | 新运行时（Bun、Deno） | 新建 `apps/<runtime>`，复用 `createServer()`；只需桥接 HTTP 和 WebSocket |

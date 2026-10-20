@@ -1,8 +1,9 @@
 # 跨文档的 principal 配额
 
 配额以可信鉴权结果的 `PrincipalId` 为键，不使用浏览器传入的用户或文档上下文。
-目前 API key 鉴权返回 client principal：同一 client key 的全部文档共享计数。
-登录用户 JWT 接入仍属于 #4；接入后可用对应的用户 principal 计数。
+vdoc 的 BFF 在 client key 之外带上 `X-Vdoc-User-Id` 时，鉴权返回由 client ID 与用户 ID 派生的用户 principal，
+每个登录用户跨文档单独计数（#4，见 [可信用户身份](TRUSTED_USER_IDENTITY.md)）。只有
+`VDOC_SERVER_ALLOW_CLIENT_ONLY=true` 时，不带用户头的请求才返回 client principal，同一 client key 的全部文档共享计数。
 
 ## 规则
 

@@ -44,7 +44,9 @@ const session = await connect(`wss://voice.example.com${created.realtimePath}`, 
 
 ## HTTP API
 
-所有接口都要带 `Authorization: Bearer <client key>`。错误统一返回 `application/problem+json`，其中 `code` 字段稳定可用。
+所有接口都要带 `Authorization: Bearer <client key>`。vdoc 的 BFF 还会带上 `X-Vdoc-User-Id`（它校验过的登录用户 ID）
+和可选的 `X-Request-Id`；这两个头只在 client key 校验通过后才被采信，因此 client key 只能放在服务端，
+浏览器只拿短期 grant，详见 [可信用户身份](docs/TRUSTED_USER_IDENTITY.md)。错误统一返回 `application/problem+json`，其中 `code` 字段稳定可用。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -58,8 +60,9 @@ const session = await connect(`wss://voice.example.com${created.realtimePath}`, 
 实时连接被拒绝时的关闭码：`4401` 授权无效，`4404` 会话不存在，`4410` 会话已结束。
 
 跨文档配额超限返回 `429`，`code` 为 `QUOTA_EXCEEDED`，`Retry-After` 是建议等待的秒数，
-浏览器可通过 CORS 读取此响应头。配额按鉴权后的 principal ID 计算；当前 API key 对应一个 client
-principal，共用同一 client key 的用户也共用配额。按登录用户计数需先接入用户鉴权（#4）。
+浏览器可通过 CORS 读取此响应头。配额按鉴权后的 principal ID 计算：带 `X-Vdoc-User-Id` 的请求
+对应一个用户 principal（由 client ID 和用户 ID 派生），每个登录用户单独计数；只有在允许纯 client 鉴权时，
+不带用户头的请求才落到共享的 client principal。
 
 ## 配置
 
@@ -70,6 +73,7 @@ principal，共用同一 client key 的用户也共用配额。按登录用户�
 | `VDOC_SERVER_ENV` | `development`（默认）、`test`、`production` |
 | `VDOC_SERVER_SIGNING_KEYS` | `id:secret,…`，secret 至少 32 字符。第一把签名，全部用于验签（换钥时把新钥放第一位） |
 | `VDOC_SERVER_CLIENTS` | `clientId:key,…`，key 至少 24 字符 |
+| `VDOC_SERVER_ALLOW_CLIENT_ONLY` | 是否接受不带 `X-Vdoc-User-Id` 的请求。生产默认 `false`，开发与测试默认 `true`；只在迁移窗口内临时设为 `true` |
 | `VDOC_SERVER_ALLOWED_ORIGINS` | 允许跨域访问的浏览器来源，逗号分隔 |
 | `VDOC_SERVER_MODEL` | `boson`、`openai`、`fake`，可写成 `boson:<model>` |
 | `BOSON_API_KEY` / `OPENAI_API_KEY` | 模型密钥 |
@@ -174,7 +178,7 @@ packages/
   config/              配置解析与内置 Agent 配置
   composition/         组合根
   adapters/
-    security/          HMAC 会话授权、API key 鉴权
+    security/          HMAC 会话授权、API key 与可信用户鉴权
     vrt/               vRealTime 接入
     http/              HTTP API
     memory/            内存仓储与测试替身
