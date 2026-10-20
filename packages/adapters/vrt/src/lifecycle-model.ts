@@ -4,6 +4,12 @@ export interface ModelLifecycle {
   opened(session: RealtimeSession): void;
   closed(session: RealtimeSession): void;
   /**
+   * The model could not connect (provider unreachable, key refused…), so the
+   * session never started. Reported even when the client has already gone and
+   * never sees the START_FAILED that follows.
+   */
+  failed?(error: unknown): void;
+  /**
    * The user finished an utterance or sent a text message: audio was committed,
    * text was sent, or the provider's own turn detection saw speech end.
    * One utterance may be reported more than once; only "has there been input since" matters.
@@ -13,10 +19,10 @@ export interface ModelLifecycle {
 }
 
 /**
- * Decorator: reports when the runtime opens and closes model sessions and when
- * the user gives input, without changing their behaviour. The runtime closes a
- * model session when its client is gone for good (no resume) or when the server
- * shuts the session down.
+ * Decorator: reports when the runtime opens, fails to open and closes model
+ * sessions and when the user gives input, without changing their behaviour.
+ * The runtime closes a model session when its client is gone for good (no
+ * resume) or when the server shuts the session down.
  */
 export function withLifecycle(model: RealtimeModel, lifecycle: ModelLifecycle): RealtimeModel {
   return {
@@ -24,7 +30,13 @@ export function withLifecycle(model: RealtimeModel, lifecycle: ModelLifecycle): 
     id: model.id,
     capabilities: model.capabilities,
     async connect(config, options) {
-      const session = await model.connect(config, options);
+      let session: RealtimeSession;
+      try {
+        session = await model.connect(config, options);
+      } catch (error) {
+        lifecycle.failed?.(error);
+        throw error;
+      }
       lifecycle.opened(session);
       const stopListening = session.on('input.speech.end', () => lifecycle.userInput?.(session));
       let closed = false;
