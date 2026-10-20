@@ -19,6 +19,6 @@ export function toView(session: VoiceSession, now: number): VoiceSessionView {
   return {
     sessionId: session.id, documentId: session.documentId, profileId: session.profileId,
     status: session.status !== 'ended' && !session.isOpenAt(now) ? 'ended' : session.status,
-    endReason: session.endReason, usage: { turns: session.usage.turns, toolCalls: session.usage.toolCalls },
+    endReason: session.endReasonAt(now), usage: { turns: session.usage.turns, toolCalls: session.usage.toolCalls },
   };
 }

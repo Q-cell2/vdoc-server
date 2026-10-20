@@ -35,6 +35,23 @@ describe('HttpApi', () => {
     expect(app.grantVoiceSession.execute).not.toHaveBeenCalled();
   });
 
+  it('refuses a body declared too large without reading it', async () => {
+    const { http, app } = api();
+    const unread = new ReadableStream({ pull() { throw new Error('the body was read'); } });
+    const response = await http.handle(new Request('https://api.test/v1/documents/d/voice-sessions', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'content-length': '1000000' }, body: unread, duplex: 'half',
+    } as RequestInit));
+    expect(response.status).toBe(413);
+    expect(app.grantVoiceSession.execute).not.toHaveBeenCalled();
+  });
+
+  it('titles quota-unavailable problems', async () => {
+    const { http } = api({ getVoiceSession: { execute: vi.fn(async () => ({ ok: false, error: { code: 'QUOTA_UNAVAILABLE', message: 'Try again.', retryAfterSeconds: 1 } })) } });
+    const response = await http.handle(request('GET', '/v1/documents/d/voice-sessions/vs_1'));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ title: 'Service Unavailable', code: 'QUOTA_UNAVAILABLE' });
+  });
+
   it('maps application errors to problem+json with stable codes', async () => {
     const { http } = api();
     const missing = await http.handle(request('GET', '/v1/documents/d/voice-sessions/vs_1'));

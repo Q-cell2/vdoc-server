@@ -45,4 +45,5 @@ export function fromAppError(error: AppError): Response {
 const TITLES: Record<number, string> = {
   400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not Found', 405: 'Method Not Allowed',
   409: 'Conflict', 410: 'Gone', 413: 'Content Too Large', 415: 'Unsupported Media Type', 426: 'Upgrade Required', 429: 'Too Many Requests', 500: 'Internal Server Error',
+  503: 'Service Unavailable',
 };
