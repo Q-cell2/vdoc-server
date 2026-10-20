@@ -13,19 +13,28 @@ describe('RiskAssessor', () => {
     expect(assessor.assess(call('apply_document_operations', ops('text.findReplace'))).risk).toBe('high');
   });
 
-  it('treats unknown operations and tools as medium, and very large batches as high', () => {
-    expect(assessor.assess(call('apply_document_operations', ops('something.new'))).risk).toBe('medium');
+  it('treats unrated operations as high, unknown tools as medium, and very large batches as high', () => {
+    expect(assessor.assess(call('apply_document_operations', ops('something.new'))).risk).toBe('high');
+    expect(assessor.assess(call('apply_document_operations', { operations: [{ action: 'deleteTable' }] })).risk).toBe('high');
+    expect(assessor.assess(call('apply_document_operations', ops('block.insert'))).risk).toBe('low');
     expect(assessor.assess(call('mystery', {})).risk).toBe('medium');
     expect(assessor.assess(call('apply_document_operations', ops(...Array(25).fill('text.style')))).risk).toBe('high');
   });
 });
 
 describe('fingerprint', () => {
-  it('ignores ids, version preconditions and key order', () => {
+  it('ignores top-level ids, version preconditions and key order', () => {
     const a = { id: 'x', expectedRevision: 3, target: { kind: 'block', id: 'b1' }, operations: [{ type: 'text.delete' }] };
     const b = { operations: [{ type: 'text.delete' }], target: { id: 'b1', kind: 'block' }, expectedRevision: 9, id: 'y' };
     expect(fingerprint({ name: 'apply_document_operations', arguments: a })).toBe(fingerprint({ name: 'apply_document_operations', arguments: b }));
     expect(fingerprint({ name: 'apply_document_operations', arguments: { ...a, operations: [{ type: 'text.insert' }] } })).not.toBe(fingerprint({ name: 'apply_document_operations', arguments: a }));
+  });
+
+  it('keeps nested ids, which name what an edit targets', () => {
+    const remove = (id: string) => ({ name: 'apply_document_operations', arguments: { expectedRevision: 1, target: { kind: 'block', id: 'b0' }, operations: [{ type: 'block.delete', id }] } });
+    expect(fingerprint(remove('b1'))).not.toBe(fingerprint(remove('b2')));
+    const targeted = (id: string) => ({ name: 'apply_document_operations', arguments: { target: { kind: 'block', id }, operations: [{ type: 'text.delete' }] } });
+    expect(fingerprint(targeted('b1'))).not.toBe(fingerprint(targeted('b2')));
   });
 });
 
@@ -59,6 +68,14 @@ describe('VoiceSession.reviewToolCall', () => {
     expect(session.reviewToolCall(destructive('t1', 4), governance(), 2).kind).toBe('confirm');
     expect(session.reviewToolCall(destructive('t2', 5), governance(), 3)).toEqual({ kind: 'allow', risk: 'high' });
     expect(session.reviewToolCall(destructive('t3', 6), governance(), 4).kind).toBe('confirm');
+  });
+
+  it('does not let a confirmation for one block authorize deleting another', () => {
+    const session = activeSession();
+    const remove = (id: string, turn: string) => call('apply_document_operations', { expectedSessionId: 'ed1', expectedBlocks: [{ id, version: 1 }], target: { kind: 'block', id }, operations: [{ type: 'block.delete', id }] }, turn);
+    expect(session.reviewToolCall(remove('b1', 't1'), governance(), 1).kind).toBe('confirm');
+    expect(session.reviewToolCall(remove('b2', 't2'), governance(), 2).kind).toBe('confirm');
+    expect(session.reviewToolCall(remove('b1', 't3'), governance(), 3)).toEqual({ kind: 'allow', risk: 'high' });
   });
 
   it('denies every call once the session is closed', () => {
