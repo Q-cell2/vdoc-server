@@ -46,6 +46,15 @@ describe('loadConfig', () => {
     expect(config.ok).toBe(false);
     if (!config.ok) expect(config.errors.join('\n')).toMatch(/OPENAI_API_KEY[\s\S]*MAX_TURNS/);
   });
+
+  it('runs cascade-claude only with both the Anthropic key and the OpenAI speech key', () => {
+    const missing = loadConfig({ VDOC_SERVER_MODEL: 'cascade-claude' });
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.errors.join('\n')).toMatch(/ANTHROPIC_API_KEY[\s\S]*OPENAI_API_KEY/);
+    expect(loadConfig({ VDOC_SERVER_MODEL: 'cascade-claude', OPENAI_API_KEY: 'o' }).ok).toBe(false);
+    expect(loadConfig({ VDOC_SERVER_MODEL: 'cascade-claude:claude-sonnet-5-5', ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' }))
+      .toMatchObject({ ok: true, value: { model: { provider: 'cascade-claude', model: 'claude-sonnet-5-5' }, providerKeys: { anthropic: 'a', openai: 'o' } } });
+  });
 });
 
 describe('editing assistant profile', () => {

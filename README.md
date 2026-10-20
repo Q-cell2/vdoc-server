@@ -71,8 +71,8 @@ principal，共用同一 client key 的用户也共用配额。按登录用户�
 | `VDOC_SERVER_SIGNING_KEYS` | `id:secret,…`，secret 至少 32 字符。第一把签名，全部用于验签（换钥时把新钥放第一位） |
 | `VDOC_SERVER_CLIENTS` | `clientId:key,…`，key 至少 24 字符 |
 | `VDOC_SERVER_ALLOWED_ORIGINS` | 允许跨域访问的浏览器来源，逗号分隔 |
-| `VDOC_SERVER_MODEL` | `boson`、`openai`、`fake`，可写成 `boson:<model>` |
-| `BOSON_API_KEY` / `OPENAI_API_KEY` | 模型密钥 |
+| `VDOC_SERVER_MODEL` | `boson`、`openai`、`cascade-claude`、`fake`，可写成 `boson:<model>`。`cascade-claude` 是语音识别 + Claude + 语音合成，默认 `claude-opus-5-5`，可写成 `cascade-claude:<Claude 模型>` |
+| `BOSON_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | 模型密钥。`cascade-claude` 需要 `ANTHROPIC_API_KEY`（Claude）和 `OPENAI_API_KEY`（语音识别与合成） |
 | `VDOC_SERVER_CONCURRENCY` | 同一文档已有会话时：`supersede`（默认，顶替）或 `reject` |
 | `VDOC_SERVER_MAX_CONCURRENT_SESSIONS_PER_PRINCIPAL` | 同一 principal 跨所有文档最多未结束会话，默认 3（含已授权未连接的会话） |
 | `VDOC_SERVER_MAX_SESSIONS_PER_HOUR` | 同一 principal 在滚动一小时内最多创建的会话，默认 60；续签、重连不重复扣次 |

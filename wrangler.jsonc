@@ -27,6 +27,7 @@
       "VDOC_SERVER_ALLOWED_ORIGINS": "https://vdoc.qyf070113.workers.dev,https://vdoc.ink"
     }
   }
-  // Secrets (wrangler secret put): VDOC_SERVER_SIGNING_KEYS, VDOC_SERVER_CLIENTS, BOSON_API_KEY,
+  // Secrets (wrangler secret put): VDOC_SERVER_SIGNING_KEYS, VDOC_SERVER_CLIENTS, BOSON_API_KEY
+  // (or ANTHROPIC_API_KEY + OPENAI_API_KEY for VDOC_SERVER_MODEL=cascade-claude),
   // and optionally VDOC_SERVER_ALLOWED_ORIGINS. Use apps/worker for local development and its .dev.vars file.
 }
