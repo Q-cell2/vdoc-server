@@ -17,7 +17,7 @@ export interface OperationRiskTable {
   readonly tools: Readonly<Record<string, RiskLevel>>;
   /** Tools whose `arguments.operations` are assessed one by one. */
   readonly batchTools: readonly string[];
-  /** Per operation, keyed `type:action` or `type`; unlisted operations are `medium`. */
+  /** Per operation, keyed `type:action` or `type`; unlisted operations are `high` until someone rates them. */
   readonly operations: Readonly<Record<string, RiskLevel>>;
   /** A batch this large is `high` whatever it contains. */
   readonly highRiskBatchSize: number;
@@ -39,7 +39,7 @@ export const VDOC_RISK_TABLE: OperationRiskTable = Object.freeze<OperationRiskTa
     'table.widths': 'low', 'table.columnWidth': 'low', 'table.rowHeight': 'low', 'table.distributeRows': 'low', 'table.split': 'low',
     'table.direction': 'low', 'table.pinRows': 'low', 'table.rowBreak': 'low',
     'image.insert': 'low', 'image.update': 'low', 'footnote.insert': 'low', 'footnote.update': 'low',
-    'block.code': 'low', 'block.quote': 'low', 'block.rule': 'low', 'block.toc': 'low', 'block.pageBreak': 'low',
+    'block.code': 'low', 'block.quote': 'low', 'block.rule': 'low', 'block.toc': 'low', 'block.pageBreak': 'low', 'block.insert': 'low',
   },
   highRiskBatchSize: 25,
 });
@@ -53,7 +53,7 @@ export class RiskAssessor {
     if (!this.table.batchTools.includes(call.name)) return { risk, operations: [] };
     const list = (call.arguments as { operations?: unknown } | null)?.operations;
     const operations = Array.isArray(list) ? list.map(describe) : [];
-    for (const operation of operations) risk = maxRisk(risk, this.table.operations[operation] ?? this.table.operations[operation.split(':')[0]!] ?? 'medium');
+    for (const operation of operations) risk = maxRisk(risk, this.table.operations[operation] ?? this.table.operations[operation.split(':')[0]!] ?? 'high');
     if (operations.length >= this.table.highRiskBatchSize) risk = 'high';
     return { risk, operations };
   }

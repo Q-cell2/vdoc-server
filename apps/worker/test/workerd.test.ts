@@ -97,8 +97,19 @@ afterAll(async () => {
     await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5000))]);
     if (worker.exitCode === null) worker.kill('SIGKILL');
   }
-  if (scratch) rmSync(scratch, { recursive: true, force: true });
-});
+  // On Windows, killing wrangler orphans its workerd process, which keeps the
+  // SQLite files in scratch open for a few more seconds before it exits.
+  const deadline = Date.now() + 20_000;
+  while (scratch) {
+    try {
+      rmSync(scratch, { recursive: true, force: true });
+      break;
+    } catch (error) {
+      if (Date.now() > deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+}, 30_000);
 
 type Granted = { sessionId: string; grant: { token: string }; realtimePath: string };
 
