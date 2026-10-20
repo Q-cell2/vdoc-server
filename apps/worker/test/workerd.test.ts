@@ -207,6 +207,30 @@ describe('vdoc-server in workerd', () => {
     await session.close();
   });
 
+  it('accepts microphone audio frames', async () => {
+    // workerd delivers binary WebSocket messages as Blob unless the socket asks for ArrayBuffer.
+    const granted = await grant('doc-audio');
+    let frames = 0;
+    const session = await connect(`${wsBase}${granted.realtimePath}`, {
+      auth: granted.grant.token,
+      reconnect: false,
+      context: { documentId: 'doc-audio', title: 'Project plan', language: 'en' },
+      audio: {
+        input: async (_format, onFrame) => {
+          const timer = setInterval(() => { frames++; onFrame(new Uint8Array(960)); }, 20);
+          return { stop: async () => clearInterval(timer) };
+        },
+        output: { enqueue() {}, flush: async () => ({}), close: async () => {} },
+      },
+    });
+    clients.push(session);
+    const errors: string[] = [];
+    session.on('error', (event) => errors.push(`${event.code}: ${event.message}`));
+    await until(() => frames >= 10);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(errors).toEqual([]);
+  });
+
   it('refuses a tampered grant', async () => {
     const granted = await grant('doc-tamper');
     await expect(openRealtime('doc-tamper', granted, [], `${granted.grant.token}x`)).rejects.toThrow();
