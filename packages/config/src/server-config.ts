@@ -13,7 +13,7 @@ export interface ServerConfig {
   /** Browser origins allowed to call the HTTP API. Empty means no CORS headers. */
   readonly allowedOrigins: readonly string[];
   readonly model: ModelChoice;
-  readonly providerKeys: { readonly boson?: string; readonly openai?: string };
+  readonly providerKeys: { readonly boson?: string; readonly openai?: string; readonly anthropic?: string };
   readonly concurrency: ConcurrencyStrategy;
   readonly limits: SessionLimits;
   readonly quotas: PrincipalQuotaLimits;
@@ -24,7 +24,7 @@ export interface ServerConfig {
 export type Env = Readonly<Record<string, string | undefined>>;
 
 const DEV_CLIENT_KEY = 'vdoc-dev-client-key-not-for-production';
-const MODELS = new Set(['boson', 'openai', 'fake']);
+const MODELS = new Set(['boson', 'openai', 'cascade-claude', 'fake']);
 
 /**
  * Parses and validates configuration in one pass and reports every problem at
@@ -71,12 +71,14 @@ export function loadConfig(env: Env): { ok: true; value: ServerConfig } | { ok: 
     if (origin === '*' ? production : !/^https?:\/\/[^/]+$/.test(origin)) errors.push(`VDOC_SERVER_ALLOWED_ORIGINS has an invalid origin "${origin}".`);
   }
 
-  const providerKeys = { ...(env.BOSON_API_KEY ? { boson: env.BOSON_API_KEY } : {}), ...(env.OPENAI_API_KEY ? { openai: env.OPENAI_API_KEY } : {}) };
+  const providerKeys = { ...(env.BOSON_API_KEY ? { boson: env.BOSON_API_KEY } : {}), ...(env.OPENAI_API_KEY ? { openai: env.OPENAI_API_KEY } : {}), ...(env.ANTHROPIC_API_KEY ? { anthropic: env.ANTHROPIC_API_KEY } : {}) };
   const [provider, modelName] = splitOnce(env.VDOC_SERVER_MODEL ?? (providerKeys.boson ? 'boson' : production ? '' : 'fake'), ':');
   if (!provider || !MODELS.has(provider)) errors.push(`VDOC_SERVER_MODEL must be one of ${[...MODELS].join(', ')} (optionally "provider:model").`);
   if (provider === 'fake' && production) errors.push('The fake model cannot run in production.');
   if (provider === 'boson' && !providerKeys.boson) errors.push('BOSON_API_KEY is required for the boson model.');
   if (provider === 'openai' && !providerKeys.openai) errors.push('OPENAI_API_KEY is required for the openai model.');
+  if (provider === 'cascade-claude' && !providerKeys.anthropic) errors.push('ANTHROPIC_API_KEY is required for the cascade-claude model.');
+  if (provider === 'cascade-claude' && !providerKeys.openai) errors.push('OPENAI_API_KEY is required for the cascade-claude model (speech recognition and synthesis).');
   const model: ModelChoice = { provider: provider ?? 'fake', ...(modelName ? { model: modelName } : {}) };
 
   const concurrency = env.VDOC_SERVER_CONCURRENCY ?? 'supersede';

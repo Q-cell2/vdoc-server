@@ -137,7 +137,7 @@ vdoc（浏览器）                 vdoc-server                                 
 
 | 想做的事 | 改哪里 |
 |---|---|
-| 换或加一个模型（如 cascade：语音识别 + Claude + TTS） | 在 `adapter-vrt/src/providers/` 加一个 `ModelProvider`，在 `createModelRegistry` 里注册；配置里加一个 provider 名 |
+| 换或加一个模型（cascade-claude 是一个例子：`providers/cascade.ts`） | 在 `adapter-vrt/src/providers/` 加一个 `ModelProvider`，在 `createModelRegistry` 里注册；配置里加一个 provider 名 |
 | 加一条工具规则（比如工作时间外禁止删除） | 在 `domain/src/tool-governance/rules/` 实现 `ToolRule`，用 `defaultToolPolicy().with(rule)` 组装 |
 | 调整风险分级 | 改 `VDOC_RISK_TABLE`（纯数据） |
 | 换一种用户鉴权（比如直接校验身份提供方的 JWT，替代 BFF 用户头） | 新写一个 `CallerAuthenticator`，在组合根替换 `TrustedUserAuthenticator` |

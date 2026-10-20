@@ -12,6 +12,7 @@ export function createNodeServer(config: ServerConfig, overrides: Partial<Omit<S
     models: createModelRegistry({
       bosonApiKey: config.providerKeys.boson,
       openaiApiKey: config.providerKeys.openai,
+      anthropicApiKey: config.providerKeys.anthropic,
       fake: config.environment === 'production' ? false : fakeResponder ? { respond: fakeResponder } : {},
     }),
     ...parts,
