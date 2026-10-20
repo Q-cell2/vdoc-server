@@ -5,6 +5,7 @@ import { Hub, type Connection, type WebSocketLike } from '@vrealtime/server';
 import { withLifecycle } from './lifecycle-model';
 import type { ModelRegistry } from './model-registry';
 import { ContextUpdates } from './context-updates';
+import { observeErrors, type ProtocolError } from './protocol-errors';
 
 /** The use cases the realtime edge drives. */
 export type RealtimeHandlers = Pick<Application,
@@ -40,6 +41,8 @@ export interface RealtimeRouteInput {
   readonly sessionId: string;
 }
 
+const MAX_LOGGED_MESSAGE = 200;
+
 const defaultScheduler: Scheduler = {
   set: (run, ms) => {
     const handle = setTimeout(run, ms);
@@ -55,12 +58,19 @@ export class RealtimeRoom {
   #everOpened = false;
   #disposed = false;
   #userInputs = 0;
+  readonly #reportedErrors = new Set<string>();
 
-  constructor(readonly sessionId: string, readonly hub: Hub, private readonly onEmpty: (room: RealtimeRoom) => void, private readonly context: ContextUpdates) {}
+  constructor(
+    readonly sessionId: string,
+    readonly hub: Hub,
+    private readonly onEmpty: (room: RealtimeRoom) => void,
+    private readonly context: ContextUpdates,
+    private readonly onProtocolError: (error: ProtocolError) => void,
+  ) {}
 
-  /** Event-style sockets (`ws`, browsers, Deno, Workers). */
+  /** Event-style sockets (`ws`, browsers, Deno, Workers). Error frames sent on them are reported. */
   attach(socket: WebSocketLike, headers?: Headers): Connection {
-    return this.hub.attach(socket, headers ? { headers } : {});
+    return this.hub.attach(observeErrors(socket, (error) => this.protocolError(error)), headers ? { headers } : {});
   }
 
   get disposed(): boolean { return this.#disposed; }
@@ -80,6 +90,13 @@ export class RealtimeRoom {
   /** @internal */ modelClosed(): void {
     this.#liveModels = Math.max(0, this.#liveModels - 1);
     if (this.#liveModels === 0) this.onEmpty(this);
+  }
+
+  /** @internal Each code once per session: a client streaming bad audio frames is one report, not one per frame. */
+  protocolError(error: ProtocolError): void {
+    if (this.#reportedErrors.has(error.code)) return;
+    this.#reportedErrors.add(error.code);
+    this.onProtocolError(error);
   }
 
   /** @internal */ markDisposed(): void {
@@ -144,9 +161,12 @@ export class RealtimeHost implements RealtimeConnections {
       (value) => handlers().configureRealtimeSession.execute({ sessionId, context: value }),
       (code) => this.#log('warn', 'context update refused', { sessionId, code }),
     );
-    const model = withLifecycle(this.options.models.create(choice), {
+    const created = this.options.models.create(choice);
+    const model = withLifecycle(created, {
       opened: (session) => { context.add(session); room.modelOpened(); },
       closed: (session) => { context.remove(session); room.modelClosed(); },
+      // Same report as the START_FAILED frame that follows, which a client that already left never gets.
+      failed: (error) => room.protocolError({ code: 'START_FAILED', message: error instanceof Error ? error.message : String(error), recoverable: false }),
       userInput: () => room.userInput(),
     });
     const agent: AgentDefinition = defineAgent({
@@ -191,7 +211,16 @@ export class RealtimeHost implements RealtimeConnections {
       ...(this.options.resumeWindowMs !== undefined ? { resumeWindowMs: this.options.resumeWindowMs } : {}),
       ...(this.options.heartbeatTimeoutMs !== undefined ? { heartbeatTimeoutMs: this.options.heartbeatTimeoutMs } : {}),
     });
-    room = new RealtimeRoom(sessionId, hub, (empty) => this.#onRoomEmpty(empty), context);
+    room = new RealtimeRoom(sessionId, hub, (empty) => this.#onRoomEmpty(empty), context, (error) => {
+      // AGENT_ERROR frames carry model errors, already logged by `onError`.
+      if (error.code === 'AGENT_ERROR') return;
+      this.#log(error.recoverable ? 'warn' : 'error', 'realtime protocol error', {
+        sessionId, code: error.code, recoverable: error.recoverable,
+        // Decode errors echo client input (`Unknown message type: …`); keep only the start.
+        error: error.message.slice(0, MAX_LOGGED_MESSAGE),
+        provider: created.provider, model: created.id,
+      });
+    });
     this.#rooms.set(sessionId, room);
     this.#scheduler.set(() => {
       if (!room.everOpened && !room.disposed) {

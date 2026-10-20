@@ -17,4 +17,5 @@ it('keeps root command discovery equivalent to the explicit Worker configuration
     { name: 'PRINCIPAL_QUOTAS', class_name: 'PrincipalQuotaRoom' },
   ]);
   expect(root.previews.vars.VDOC_SERVER_ENV).toBe('production');
+  expect(root.observability).toEqual({ logs: { enabled: true, invocation_logs: true } });
 });

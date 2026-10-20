@@ -6,6 +6,7 @@ export { cascadeClaudeProvider } from './providers/cascade';
 export { DEFAULT_CLAUDE_MODEL, claudeText, type ClaudeTextOptions } from './providers/claude-text';
 export { echoResponder, fakeProvider, type FakeReply, type FakeResponder } from './providers/fake';
 export { openaiProvider } from './providers/openai';
+export { observeErrors, type ProtocolError } from './protocol-errors';
 export {
   RealtimeHost, RealtimeRoom, toSessionConfig,
   type RealtimeHandlers, type RealtimeHostOptions, type RealtimeLogger, type RealtimeRouteInput, type Scheduler,
