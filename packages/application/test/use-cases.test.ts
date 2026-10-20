@@ -35,6 +35,15 @@ describe('GrantVoiceSession', () => {
 });
 
 describe('RenewSessionGrant and GetVoiceSession', () => {
+  it('reports why an overdue session ended before anything has ended it', async () => {
+    const h = harness({ limits: { grantTtlMs: 1_000 } });
+    const granted = await h.app.grantVoiceSession.execute({ credentials: as(alice), documentId: 'doc-1' });
+    if (!granted.ok) throw new Error('grant failed');
+    h.clock.advance(5_000);
+    expect(await h.app.getVoiceSession.execute({ credentials: as(alice), documentId: 'doc-1', sessionId: granted.value.session.sessionId }))
+      .toMatchObject({ ok: true, value: { status: 'ended', endReason: 'expired' } });
+  });
+
   it('serve only the owner; others cannot even tell the session exists', async () => {
     const h = harness();
     const { sessionId } = await connected(h);

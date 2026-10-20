@@ -58,6 +58,13 @@ export interface ToolGovernance {
 }
 
 const MAX_PENDING_CONFIRMATIONS = 16;
+/**
+ * Idempotency memory for repeated callbacks (resume replays, retried commands). Repeats
+ * arrive within moments, so a recent window is enough; unbounded lists would grow the
+ * snapshot by every turn and call until it hit the storage row limit.
+ */
+const REMEMBERED_TURNS = 64;
+const REMEMBERED_TOOL_RESULTS = 256;
 
 /**
  * Aggregate root: one person talking to the agent about one document.
@@ -115,6 +122,11 @@ export class VoiceSession extends AggregateRoot<VoiceSessionEvent> {
 
   isOwnedBy(principalId: PrincipalId): boolean {
     return this.state.principalId === principalId;
+  }
+
+  /** Why the session has ended or would end at `now` (a passed deadline nobody has acted on yet); `null` while open. */
+  endReasonAt(now: number): EndReason | null {
+    return this.state.status === 'ended' ? this.state.endReason : this.overdueReason(now) ?? null;
   }
 
   /** Not ended and not past a deadline that would end it. */
@@ -181,7 +193,7 @@ export class VoiceSession extends AggregateRoot<VoiceSessionEvent> {
 
   recordToolResult(call: Pick<ToolCall, 'id' | 'name' | 'turnId'>, outcome: { ok: boolean; code?: string }, now: number): void {
     if ((this.state.completedToolCallIds ?? []).includes(call.id)) return;
-    this.state = { ...this.state, completedToolCallIds: [...(this.state.completedToolCallIds ?? []), call.id] };
+    this.state = { ...this.state, completedToolCallIds: [...(this.state.completedToolCallIds ?? []), call.id].slice(-REMEMBERED_TOOL_RESULTS) };
     this.record({
       type: 'ToolCallCompleted', aggregateId: this.state.id, occurredAt: now, callId: call.id, tool: call.name, turnId: call.turnId,
       ok: outcome.ok, ...(outcome.code !== undefined ? { code: outcome.code } : {}),
@@ -191,7 +203,9 @@ export class VoiceSession extends AggregateRoot<VoiceSessionEvent> {
   /** Counts the turn and ends the session if it used up its turns. Returns the end reason when it ended. */
   completeTurn(turnId: TurnId, now: number, metrics: TurnMetrics = {}): EndReason | undefined {
     if (this.state.status === 'ended' || (this.state.completedTurnIds ?? []).includes(turnId)) return undefined;
-    this.state = { ...this.state, completedTurnIds: [...(this.state.completedTurnIds ?? []), turnId] };
+    // A finished turn's calls are settled, so its review decisions can no longer be replayed.
+    const toolDecisions = Object.fromEntries(Object.entries(this.state.toolDecisions ?? {}).filter(([, entry]) => entry.turnId !== turnId));
+    this.state = { ...this.state, completedTurnIds: [...(this.state.completedTurnIds ?? []), turnId].slice(-REMEMBERED_TURNS), toolDecisions };
     const toolCalls = Usage.callsSoFar(this.state.usage, turnId);
     this.state = { ...this.state, usage: Usage.withCompletedTurn(this.state.usage) };
     this.record({ ...metrics, type: 'TurnCompleted', aggregateId: this.state.id, occurredAt: now, turnId, toolCalls });
@@ -214,7 +228,8 @@ export class VoiceSession extends AggregateRoot<VoiceSessionEvent> {
   end(reason: EndReason, now: number): boolean {
     if (this.state.status === 'ended') return false;
     const durationMs = this.state.startedAt === null ? null : now - this.state.startedAt;
-    this.state = { ...this.state, status: 'ended', endedAt: now, endReason: reason, pendingConfirmations: [] };
+    // Cached decisions are only consulted while active.
+    this.state = { ...this.state, status: 'ended', endedAt: now, endReason: reason, pendingConfirmations: [], toolDecisions: {} };
     this.record({ type: 'VoiceSessionEnded', aggregateId: this.state.id, occurredAt: now, reason, durationMs, usage: this.state.usage });
     return true;
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ToolCallId, TurnId, VoiceSession } from '../src';
-import { activeSession, grantedSession, principal } from './fixtures';
+import { activeSession, governance, grantedSession, principal } from './fixtures';
 
 describe('VoiceSession lifecycle', () => {
   it('is granted to one principal and records the grant', () => {
@@ -67,6 +67,37 @@ describe('VoiceSession lifecycle', () => {
     expect(pending.issueGrant(900).ok).toBe(true);
     expect(pending.toSnapshot().connectDeadline).toBe(1500);
     expect(pending.issueGrant(1501).ok).toBe(false);
+  });
+
+  it('keeps its snapshot small however many turns and tool calls it records', () => {
+    const session = activeSession(0, { maxTurns: 300, maxToolCallsPerTurn: 12, maxDurationMs: 1e12 });
+    let now = 1;
+    for (let turn = 0; turn < 300; turn++) {
+      const turnId = TurnId.assume(`turn-${turn}-${'x'.repeat(32)}`);
+      for (let index = 0; index < 12; index++) {
+        const call = { id: ToolCallId.assume(`call-${turn}-${index}-${'y'.repeat(32)}`), name: 'read_document', arguments: {}, turnId };
+        session.reviewToolCall(call, governance(), now++, turn);
+        session.recordToolResult(call, { ok: true }, now++);
+      }
+      session.completeTurn(turnId, now++);
+      session.pullEvents();
+    }
+    expect(session.status).toBe('ended');
+    expect(JSON.stringify(session.toSnapshot()).length).toBeLessThan(32_000);
+  });
+
+  it('forgets a finished turn’s tool decisions, yet still counts that turn and its results once', () => {
+    const session = activeSession();
+    const turnId = TurnId.assume('t1');
+    const call = { id: ToolCallId.assume('c1'), name: 'read_document', arguments: {}, turnId };
+    session.reviewToolCall(call, governance(), 2, 0);
+    session.recordToolResult(call, { ok: true }, 3);
+    session.completeTurn(turnId, 4);
+    expect(session.toSnapshot().toolDecisions ?? {}).toEqual({});
+    session.recordToolResult(call, { ok: true }, 5);
+    expect(session.completeTurn(turnId, 6)).toBeUndefined();
+    expect(session.usage.turns).toBe(1);
+    expect(session.pullEvents().filter((event) => event.type === 'ToolCallCompleted' || event.type === 'TurnCompleted')).toHaveLength(2);
   });
 
 });
