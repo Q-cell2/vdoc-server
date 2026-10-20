@@ -72,6 +72,8 @@ export class DocumentVoiceRoom extends DurableObject<Env> {
     const room = await server.realtime.open(route);
     const pair = new WebSocketPair();
     const [client, socket] = [pair[0], pair[1]];
+    // Since websocket_standard_binary_type, binary messages default to Blob; vRealTime reads audio frames as bytes.
+    socket.binaryType = 'arraybuffer';
     socket.accept();
     if (room.ok) room.value.attach(socket as unknown as WebSocketLike, request.headers);
     else socket.close(closeCodeOf(room.error.code), room.error.code);
