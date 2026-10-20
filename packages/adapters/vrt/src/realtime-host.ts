@@ -54,6 +54,7 @@ export class RealtimeRoom {
   #liveModels = 0;
   #everOpened = false;
   #disposed = false;
+  #userInputs = 0;
 
   constructor(readonly sessionId: string, readonly hub: Hub, private readonly onEmpty: (room: RealtimeRoom) => void, private readonly context: ContextUpdates) {}
 
@@ -64,6 +65,12 @@ export class RealtimeRoom {
 
   get disposed(): boolean { return this.#disposed; }
   get everOpened(): boolean { return this.#everOpened; }
+  /** User utterances and text messages across this room's model sessions. In memory: a restart starts again at 0, which only makes pending confirmations ask again. */
+  get userInputs(): number { return this.#userInputs; }
+
+  /** @internal */ userInput(): void {
+    this.#userInputs++;
+  }
 
   /** @internal */ modelOpened(): void {
     this.#liveModels++;
@@ -140,6 +147,7 @@ export class RealtimeHost implements RealtimeConnections {
     const model = withLifecycle(this.options.models.create(choice), {
       opened: (session) => { context.add(session); room.modelOpened(); },
       closed: (session) => { context.remove(session); room.modelClosed(); },
+      userInput: () => room.userInput(),
     });
     const agent: AgentDefinition = defineAgent({
       model,
@@ -149,7 +157,7 @@ export class RealtimeHost implements RealtimeConnections {
       hooks: {
         beforeToolCall: async (call) => {
           const decision = await handlers().reviewToolCall.execute({
-            sessionId, callId: call.callId, name: call.name, arguments: call.arguments, turnId: call.turn.id,
+            sessionId, callId: call.callId, name: call.name, arguments: call.arguments, turnId: call.turn.id, userInputs: room.userInputs,
           });
           return decision.kind === 'allow' ? { action: 'allow' } : { action: 'reject', message: decision.message };
         },

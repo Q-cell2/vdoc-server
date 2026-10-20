@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { VirtualClock, fakeModel } from '@vrealtime/testing';
 import { ModelRegistry, createModelRegistry, fakeProvider, toSessionConfig, withLifecycle } from '../src';
 
 describe('ModelRegistry', () => {
@@ -25,6 +26,25 @@ describe('withLifecycle', () => {
     await session.close();
     await session.close();
     expect(lifecycle.closed).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports user input on committed audio, sent text and provider speech end, never on transcripts', async () => {
+    const clock = new VirtualClock();
+    const userInput = vi.fn();
+    const model = withLifecycle(fakeModel({ clock, script: [
+      { at: 5, event: { type: 'input.speech.end', atMs: 5 } },
+      { at: 6, event: { type: 'input.transcript', itemId: 'u1', text: 'yes', final: true } },
+      { at: 20, event: { type: 'input.speech.end', atMs: 20 } },
+    ] }), { opened: vi.fn(), closed: vi.fn(), userInput });
+    const session = await model.connect({});
+    session.commitAudio();
+    session.sendText('yes');
+    expect(userInput).toHaveBeenCalledTimes(2);
+    clock.advance(10);
+    expect(userInput).toHaveBeenCalledTimes(3);
+    await session.close();
+    clock.advance(20);
+    expect(userInput).toHaveBeenCalledTimes(3);
   });
 });
 

@@ -11,7 +11,7 @@ export interface ToolReviewContext {
   readonly limits: SessionLimits;
   /** Calls the same turn made before this one. */
   readonly callsSoFarInTurn: number;
-  /** The user was asked about exactly this request in an earlier turn. */
+  /** The user was asked about exactly this request in an earlier turn and has given input since. */
   readonly confirmedInEarlierTurn: boolean;
 }
 
