@@ -10,7 +10,7 @@ export { GetVoiceSession } from './use-cases/get-voice-session';
 export { GrantVoiceSession, type GrantVoiceSessionInput, type GrantVoiceSessionOutput } from './use-cases/grant-voice-session';
 export { RecordToolResult, type RecordToolResultInput } from './use-cases/record-tool-result';
 export { RenewSessionGrant, type RenewSessionGrantInput } from './use-cases/renew-session-grant';
-export { ResolveRealtimeRoute, type RealtimeRoute } from './use-cases/resolve-realtime-route';
+export { GetRealtimeSessionDescriptor, type RealtimeSessionDescriptor } from './use-cases/get-realtime-session-descriptor';
 export { ReviewToolCall, type ToolCallInput } from './use-cases/review-tool-call';
 export type { GrantView, VoiceSessionView } from './use-cases/views';
 export { VoiceSessionStore } from './voice-session-store';

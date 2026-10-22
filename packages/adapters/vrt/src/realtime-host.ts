@@ -12,7 +12,7 @@ import { observeErrors, type ProtocolError } from './protocol-errors';
 
 /** The use cases the realtime edge drives. */
 export type RealtimeHandlers = Pick<Application,
-  'resolveRealtimeRoute' | 'connectRealtime' | 'configureRealtimeSession' |
+  'getRealtimeSessionDescriptor' | 'connectRealtime' | 'configureRealtimeSession' |
   'reviewToolCall' | 'recordToolResult' | 'completeTurn' | 'handleRealtimeDisconnect' | 'recordUserInput'>;
 
 export interface RealtimeLogger {
@@ -121,7 +121,7 @@ export class RealtimeHost implements RealtimeConnections {
 
   /** Checks the route against an open session, then returns its room (created on first use). */
   async open(route: RealtimeRouteInput): Promise<Result<RealtimeRoom, AppError>> {
-    const resolved = await this.options.handlers.resolveRealtimeRoute.execute(route);
+    const resolved = await this.options.handlers.getRealtimeSessionDescriptor.execute(route);
     if (!resolved.ok) return resolved;
     const existing = this.#rooms.get(resolved.value.sessionId);
     if (existing && !existing.disposed) return ok(existing);

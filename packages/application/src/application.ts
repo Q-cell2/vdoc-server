@@ -15,7 +15,7 @@ import { GetVoiceSession } from './use-cases/get-voice-session';
 import { GrantVoiceSession } from './use-cases/grant-voice-session';
 import { RecordToolResult } from './use-cases/record-tool-result';
 import { RenewSessionGrant } from './use-cases/renew-session-grant';
-import { ResolveRealtimeRoute } from './use-cases/resolve-realtime-route';
+import { GetRealtimeSessionDescriptor } from './use-cases/get-realtime-session-descriptor';
 import { ReviewToolCall } from './use-cases/review-tool-call';
 import { VoiceSessionStore } from './voice-session-store';
 
@@ -50,7 +50,7 @@ export interface Application {
   readonly renewSessionGrant: Pick<RenewSessionGrant, keyof RenewSessionGrant>;
   readonly getVoiceSession: Pick<GetVoiceSession, keyof GetVoiceSession>;
   readonly endVoiceSession: Pick<EndVoiceSession, keyof EndVoiceSession>;
-  readonly resolveRealtimeRoute: Pick<ResolveRealtimeRoute, keyof ResolveRealtimeRoute>;
+  readonly getRealtimeSessionDescriptor: Pick<GetRealtimeSessionDescriptor, keyof GetRealtimeSessionDescriptor>;
   readonly connectRealtime: Pick<ConnectRealtime, keyof ConnectRealtime>;
   readonly configureRealtimeSession: Pick<ConfigureRealtimeSession, keyof ConfigureRealtimeSession>;
   readonly reviewToolCall: Pick<ReviewToolCall, keyof ReviewToolCall>;
@@ -76,7 +76,7 @@ export function createApplication(deps: ApplicationDependencies): Application {
     renewSessionGrant: new RenewSessionGrant({ store, lifecycle, quotas, authenticator, signer, clock }),
     getVoiceSession: new GetVoiceSession({ store, authenticator, clock }),
     endVoiceSession: new EndVoiceSession({ store, lifecycle, authenticator, clock }),
-    resolveRealtimeRoute: new ResolveRealtimeRoute({ store, profiles, clock }),
+    getRealtimeSessionDescriptor: new GetRealtimeSessionDescriptor({ store, profiles, clock }),
     connectRealtime: new ConnectRealtime({ store, lifecycle, quotas, signer, clock }),
     configureRealtimeSession: new ConfigureRealtimeSession({ store, profiles, clock }),
     reviewToolCall: new ReviewToolCall({ store, lifecycle, profiles, policy: deps.toolPolicy, assessor: deps.riskAssessor, clock }),
