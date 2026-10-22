@@ -125,7 +125,7 @@ describe('aggregate and persistence boundaries', () => {
     const save = vi.spyOn(h.repository, 'putRecord');
     expect(await h.app.getVoiceSession.execute({ credentials: as(alice), documentId, sessionId })).toMatchObject({ ok: true, value: { status: 'ended', endReason: 'limit-duration' } });
     expect((await h.app.configureRealtimeSession.execute({ sessionId, context: {} })).ok).toBe(false);
-    expect((await h.app.resolveRealtimeRoute.execute({ sessionId, documentId })).ok).toBe(false);
+    expect((await h.app.getRealtimeSessionDescriptor.execute({ sessionId, documentId })).ok).toBe(false);
     expect((await h.app.renewSessionGrant.execute({ credentials: as(alice), sessionId, documentId })).ok).toBe(false);
     expect((await h.app.connectRealtime.execute({ sessionId, documentId, token })).ok).toBe(false);
     expect(save).not.toHaveBeenCalled();

@@ -94,7 +94,7 @@ vdoc（浏览器）                 vdoc-server                                 
    │ ───────────────────────▶ GrantVoiceSession：鉴权 → 并发策略 → 创建会话 → 签发授权
    │ ◀── 201 { sessionId, grant.token, realtimePath }
    │ WS realtimePath
-   │ ───────────────────────▶ ResolveRealtimeRoute：会话存在且未结束才接受
+   │ ───────────────────────▶ GetRealtimeSessionDescriptor：会话存在且未结束才接受
    │ hello { auth: token, context }
    │ ───────────────────────▶ ConnectRealtime：验签 → 范围 → 连接
    │                          ConfigureRealtimeSession：配置 + 清洗过的文档上下文 → 指令

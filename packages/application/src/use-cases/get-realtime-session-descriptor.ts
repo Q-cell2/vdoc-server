@@ -3,20 +3,20 @@ import { appError, type AppError } from '../errors';
 import type { Clock } from '../ports';
 import type { VoiceSessionStore } from '../voice-session-store';
 
-export interface RealtimeRoute {
+export interface RealtimeSessionDescriptor {
   readonly sessionId: string;
   readonly model: ModelChoice;
 }
 
 /**
- * Query run before a WebSocket upgrade is accepted: the route must name an open
- * session of that document. Rejecting here keeps junk upgrades from reserving
- * any realtime resources. Authentication still happens on `hello`.
+ * Query the model descriptor of an open session belonging to the document.
+ * The realtime adapter uses it before allocating connection resources.
+ * Route parsing belongs to the transport; authentication happens on `hello`.
  */
-export class ResolveRealtimeRoute {
+export class GetRealtimeSessionDescriptor {
   constructor(private readonly deps: { store: VoiceSessionStore; profiles: AgentProfileRepository; clock: Clock }) {}
 
-  async execute(input: { documentId: string; sessionId: string }): Promise<Result<RealtimeRoute, AppError>> {
+  async execute(input: { documentId: string; sessionId: string }): Promise<Result<RealtimeSessionDescriptor, AppError>> {
     const session = await this.deps.store.find(input.documentId, input.sessionId);
     if (!session.ok) return session;
     if (!session.value.isOpenAt(this.deps.clock.now())) return err(appError('SESSION_CLOSED', 'This voice session has ended.'));
