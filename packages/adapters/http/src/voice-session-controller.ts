@@ -33,7 +33,7 @@ export class VoiceSessionController {
   };
 
   end = async (request: Request, params: Params): Promise<Response> => {
-    const result = await this.app.endVoiceSession.byClient({ credentials: credentialsOf(request), documentId: params.documentId!, sessionId: params.sessionId! });
+    const result = await this.app.endVoiceSession.execute({ credentials: credentialsOf(request), documentId: params.documentId!, sessionId: params.sessionId! });
     return result.ok ? new Response(null, { status: 204 }) : fromAppError(result.error);
   };
 }

@@ -1,4 +1,5 @@
-import { VoiceSession, type DocumentId, type VoiceSessionId, type VoiceSessionRepository, type VoiceSessionSnapshot } from '@vdoc-server/domain';
+import { migrateSessionRecord, nextSessionWake, type SessionRecord, type SessionRepository } from '@vdoc-server/application';
+import { VoiceSession, type DocumentId, type VoiceSessionId, type VoiceSessionSnapshot } from '@vdoc-server/domain';
 export { DurableObjectAuditPublisher, type AuditPage, type AuditRecord, type AuditStorage } from './audit';
 
 export interface StorageTransaction {
@@ -33,28 +34,43 @@ const DAY = 86_400_000;
 const BATCH_SIZE = 128;
 
 /** One repository per document. The runtime must serialize complete application commands, not just saves. */
-export class DurableObjectVoiceSessionRepository implements VoiceSessionRepository {
+export class DurableObjectVoiceSessionRepository implements SessionRepository {
   constructor(private readonly storage: KeyValueStorage, private readonly retainEndedMs = 7 * DAY, private readonly now: () => number = Date.now) {}
 
   async get(id: VoiceSessionId): Promise<VoiceSession | undefined> {
-    const snapshot = await this.storage.get<VoiceSessionSnapshot>(PREFIX + id);
-    return snapshot && VoiceSession.restore(snapshot);
+    const record = await this.getRecord(id);
+    return record && VoiceSession.restore(record.session);
   }
-
+  async getRecord(id: string): Promise<SessionRecord | undefined> {
+    const raw = await this.storage.get<SessionRecord | VoiceSessionSnapshot>(PREFIX + id);
+    return raw && migrateSessionRecord(raw);
+  }
+  async *records(): AsyncGenerator<SessionRecord> {
+    for await (const rows of this.#pages(this.storage)) for (const row of rows.values()) yield row;
+  }
+  async removeRecords(ids: readonly string[]): Promise<void> {
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) await this.storage.delete(ids.slice(i, i + BATCH_SIZE).map(id => PREFIX + id));
+  }
+  async schedule(nextWakeAt: number | undefined): Promise<void> {
+    if (nextWakeAt === undefined) await this.storage.deleteAlarm();
+    else await this.storage.setAlarm(Math.max(this.now(), nextWakeAt));
+  }
   async findUnended(documentId: DocumentId): Promise<VoiceSession[]> {
-    const sessions: VoiceSessionSnapshot[] = [];
-    for await (const rows of this.#pages(this.storage)) {
-      for (const row of rows.values()) if (row.documentId === documentId && row.status !== 'ended') sessions.push(row);
-    }
-    return sessions.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)).map(VoiceSession.restore);
+    const records: SessionRecord[] = [];
+    for await (const record of this.records()) if (record.session.documentId === documentId && record.session.status !== 'ended') records.push(record);
+    return records.sort((a,b) => a.session.createdAt - b.session.createdAt || a.session.id.localeCompare(b.session.id)).map(r => VoiceSession.restore(r.session));
   }
-
   async save(session: VoiceSession): Promise<void> {
-    const snapshot = session.toSnapshot();
-    // A committed snapshot must always have a wake-up, even if the object is evicted immediately.
-    await this.storage.transaction(async (tx) => {
-      await tx.put(PREFIX + session.id, snapshot);
-      const next = this.#deadline(snapshot);
+    const old = await this.getRecord(session.id);
+    const record = old ? { ...old, session: session.toSnapshot() } : migrateSessionRecord(session.toSnapshot());
+    const nextWakeAt = nextSessionWake(record, this.now(), this.retainEndedMs);
+    await this.putRecord({ ...record, ...(nextWakeAt !== undefined ? { nextWakeAt } : {}) });
+  }
+  /** Atomically persist a precomputed wake-up with its envelope. No domain deadline rules here. */
+  async putRecord(record: SessionRecord): Promise<void> {
+    await this.storage.transaction(async tx => {
+      await tx.put(PREFIX + record.session.id, record);
+      const next = record.nextWakeAt;
       const alarm = await tx.getAlarm();
       if (next !== undefined && (alarm === null || next < alarm)) await tx.setAlarm(Math.max(this.now(), next));
     });
@@ -69,73 +85,25 @@ export class DurableObjectVoiceSessionRepository implements VoiceSessionReposito
     });
   }
 
-  /** Candidates only: the application must reload each session and recheck its deadline before ending it. */
-  async findOverdue(): Promise<string[]> {
-    const ids: string[] = [];
-    const now = this.now();
-    for await (const rows of this.#pages(this.storage)) {
-      for (const row of rows.values()) {
-        if (row.status !== 'ended' && !VoiceSession.restore(row).isOpenAt(now)) ids.push(row.id);
-      }
-    }
-    return ids;
-  }
-
-  async findPendingPublications(): Promise<string[]> {
-    const ids: string[] = [];
-    for await (const rows of this.#pages(this.storage)) {
-      for (const row of rows.values()) if (row.pendingAuditEvents?.length) ids.push(row.id);
-    }
-    return ids;
-  }
-
-  /** Called by the alarm in the same command queue as HTTP and WebSocket commands. */
-  async pruneAndSchedule(): Promise<void> {
-    await this.storage.transaction(async (tx) => {
-      const cutoff = this.now() - this.retainEndedMs;
-      for await (const rows of this.#pages(tx)) {
-        const stale = [...rows].filter(([, row]) => row.status === 'ended' && row.endedAt !== null && row.endedAt < cutoff && !row.pendingAuditEvents?.length).map(([key]) => key);
-        if (stale.length > 0) await tx.delete(stale);
-      }
-      const next = await this.#nextDeadline(tx);
-      if (next === undefined) await tx.deleteAlarm();
-      else await tx.setAlarm(Math.max(this.now(), next));
-    });
-  }
-
-  #deadline(row: VoiceSessionSnapshot): number | undefined {
-    if (row.pendingAuditEvents?.length) return row.status === 'ended'
-      ? this.now() + 30_000
-      : Math.min(this.now() + 30_000, this.#sessionDeadline(row) ?? Infinity);
-    return this.#sessionDeadline(row);
-  }
-
-  #sessionDeadline(row: VoiceSessionSnapshot): number | undefined {
-    if (row.status === 'granted') return row.connectDeadline + 1; // Domain grants are open at the deadline itself.
-    if (row.status === 'active' && row.startedAt !== null) return row.startedAt + row.limits.maxDurationMs;
-    if (row.status === 'ended' && row.endedAt !== null) return row.endedAt + this.retainEndedMs + 1;
-    return undefined;
-  }
-
   async #nextDeadline(storage: StorageTransaction): Promise<number | undefined> {
     let next: number | undefined;
     for await (const rows of this.#pages(storage)) {
       for (const row of rows.values()) {
-        const deadline = this.#deadline(row);
+        const deadline = row.nextWakeAt ?? nextSessionWake(row, this.now(), this.retainEndedMs);
         if (deadline !== undefined && (next === undefined || deadline < next)) next = deadline;
       }
     }
     return next;
   }
 
-  async *#pages(storage: StorageTransaction): AsyncGenerator<Map<string, VoiceSessionSnapshot>> {
+  async *#pages(storage: StorageTransaction): AsyncGenerator<Map<string, SessionRecord>> {
     let startAfter: string | undefined;
     for (;;) {
-      const rows = await storage.list<VoiceSessionSnapshot>({ prefix: PREFIX, limit: BATCH_SIZE, ...(startAfter === undefined ? {} : { startAfter }) });
+      const rows = await storage.list<SessionRecord | VoiceSessionSnapshot>({ prefix: PREFIX, limit: BATCH_SIZE, ...(startAfter === undefined ? {} : { startAfter }) });
       if (rows.size === 0) return;
       // Capture the cursor before the caller can delete this page.
       startAfter = [...rows.keys()].at(-1)!;
-      yield rows;
+      yield new Map([...rows].map(([key, row]) => [key, migrateSessionRecord(row)]));
       if (rows.size < BATCH_SIZE) return;
     }
   }

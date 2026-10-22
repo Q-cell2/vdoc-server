@@ -1,3 +1,4 @@
+import { toSessionConfig } from './session-config';
 import type { AgentSessionSettings, AppError } from '@vdoc-server/application';
 import type { Result } from '@vdoc-server/domain';
 import type { RealtimeSession, SessionConfig } from '@vrealtime/core';
@@ -47,13 +48,8 @@ export class ContextUpdates {
         const settings = await this.configure(context);
         if (this.#closed) return;
         if (!settings.ok) { this.refused(settings.error.code); continue; }
-        const config: Partial<SessionConfig> = {
-          instructions: settings.value.instructions,
-          inputTranscription: {
-            language: settings.value.language.split('-')[0]!.toLowerCase(),
-            vocabulary: settings.value.vocabulary,
-          },
-        };
+        const mapped = toSessionConfig(settings.value);
+        const config: Partial<SessionConfig> = { instructions: mapped.instructions!, inputTranscription: mapped.inputTranscription! };
         for (const model of this.#models) {
           if (this.#closed) return;
           if (!model.capabilities.midSessionUpdate.instructions) continue;

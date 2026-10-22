@@ -22,7 +22,7 @@ describe('document command serialization', () => {
     await Promise.all(Array.from({ length: 10 }, (_, n) => h.app.completeTurn.execute({ sessionId, turnId: 't' + n })));
     expect(h.repository.rows.get(sessionId)?.usage.turns).toBe(10);
     await Promise.all([
-      h.app.endVoiceSession.bySystem(sessionId, 'disconnected'),
+      h.app.handleRealtimeDisconnect.execute(sessionId),
       h.app.completeTurn.execute({ sessionId, turnId: 'late' }),
     ]);
     expect(h.repository.rows.get(sessionId)).toMatchObject({ status: 'ended', endReason: 'disconnected', usage: { turns: 10 } });
@@ -32,14 +32,14 @@ describe('document command serialization', () => {
     const h = setup({ limits: { maxDurationMs: 100 } });
     const { sessionId } = await connected(h);
     h.clock.advance(100);
-    await h.app.endVoiceSession.expireIfOverdue(sessionId);
-    await h.app.endVoiceSession.expireIfOverdue(sessionId);
+    await h.app.expireVoiceSession.execute(sessionId);
+    await h.app.expireVoiceSession.execute(sessionId);
     expect(h.connections.closed).toEqual([{ sessionId, reason: 'limit-duration' }]);
     expect(h.events.events.filter((e) => e.type === 'VoiceSessionEnded')).toHaveLength(1);
     const grant = await h.app.grantVoiceSession.execute({ credentials: as(alice), documentId: 'doc-2' });
     if (!grant.ok) throw new Error('grant failed');
     h.clock.advance(60_001);
-    await h.app.endVoiceSession.expireIfOverdue(grant.value.session.sessionId);
+    await h.app.expireVoiceSession.execute(grant.value.session.sessionId);
     expect(h.repository.rows.get(grant.value.session.sessionId)).toMatchObject({ status: 'ended', endReason: 'expired' });
   });
 
@@ -51,7 +51,7 @@ describe('document command serialization', () => {
     h.clock.advance(90);
     await h.app.renewSessionGrant.execute({ credentials: as(alice), documentId: 'doc-1', sessionId });
     h.clock.advance(11);
-    await h.app.endVoiceSession.expireIfOverdue(sessionId);
+    await h.app.expireVoiceSession.execute(sessionId);
     expect(h.repository.rows.get(sessionId)?.status).toBe('granted');
     expect(h.connections.closed).toEqual([]);
   });

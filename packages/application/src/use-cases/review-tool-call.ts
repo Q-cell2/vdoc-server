@@ -1,3 +1,4 @@
+import type { SessionLifecycle } from '../session-lifecycle';
 import {
   ToolCallId, TurnId, VoiceSessionId,
   type AgentProfileRepository, type RiskAssessor, type ToolDecision, type ToolPolicy,
@@ -11,15 +12,13 @@ export interface ToolCallInput {
   readonly name: string;
   readonly arguments: unknown;
   readonly turnId: string;
-  /** User utterances and text messages the realtime edge has seen in this session so far. */
-  readonly userInputs: number;
 }
 
 const closed = (message: string): ToolDecision => ({ kind: 'deny', risk: 'low', code: 'SESSION_CLOSED', message });
 
 /** Command: the model wants to run a tool; decide before the app ever sees the call. */
 export class ReviewToolCall {
-  constructor(private readonly deps: { store: VoiceSessionStore; profiles: AgentProfileRepository; policy: ToolPolicy; assessor: RiskAssessor; clock: Clock }) {}
+  constructor(private readonly deps: { store: VoiceSessionStore; lifecycle: SessionLifecycle; profiles: AgentProfileRepository; policy: ToolPolicy; assessor: RiskAssessor; clock: Clock }) {}
 
   async execute(input: ToolCallInput): Promise<ToolDecision> {
     const { store, profiles, policy, assessor, clock } = this.deps;
@@ -32,14 +31,13 @@ export class ReviewToolCall {
     if (!session || !profile) return closed('This voice session has ended.');
 
     const now = clock.now();
-    session.expireIfOverdue(now);
     const decision = session.reviewToolCall(
       { id: callId.value, name: input.name, arguments: input.arguments, turnId: turnId.value },
       { policy, assessor, allowedTools: profile.allowedTools },
       now,
-      Number.isSafeInteger(input.userInputs) && input.userInputs >= 0 ? input.userInputs : 0,
     );
-    await store.commit(session);
+    const committed = await this.deps.lifecycle.persistAndDispatch(session);
+    if (!committed.ok) throw new Error(committed.error.message);
     return decision;
   }
 }

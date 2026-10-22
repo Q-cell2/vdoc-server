@@ -1,15 +1,14 @@
 import type { DomainEvent } from '@vdoc-server/domain';
 import { describe, expect, it, vi } from 'vitest';
-import { EndVoiceSession, VoiceSessionStore } from '../src';
+import { RelaySessionOutbox, SessionQuotaService, QuotaEventHandler, DisconnectEventHandler, UsageSettlementPublisher } from '../src';
 import { connected, harness } from './fakes';
 import { loadConfig } from '../../config/src';
 import { createNodeServer } from '../../../apps/node/src/create';
 
 /** Reconstruct the commands from the durable snapshots, retaining only external stores. */
-const restarted = (h: ReturnType<typeof harness>) => new EndVoiceSession({
-  store: new VoiceSessionStore(h.repository, h.events, h.connections, h.quotas, h.clock),
-  authenticator: { authenticate: async () => undefined }, clock: h.clock,
-});
+const restarted = (h: ReturnType<typeof harness>) => new RelaySessionOutbox(h.repository, [
+  new QuotaEventHandler(new SessionQuotaService(h.quotas, h.repository, h.events, h.clock)), new DisconnectEventHandler(h.connections),
+], new UsageSettlementPublisher(h.events), h.clock);
 
 const call = (sessionId: string) => ({ sessionId, callId: 'call-delivery', turnId: 'turn-delivery', name: 'read_document' });
 
@@ -23,13 +22,13 @@ describe('durable usage audit delivery', () => {
     const created = await server.application.grantVoiceSession.execute({ credentials: { bearer: key, trustedUserId: 'node-user' }, documentId: 'node-settlements' });
     if (!created.ok) throw new Error(created.error.message);
     const { sessionId } = created.value.session;
-    expect((await server.application.authorizeRealtimeConnection.execute({ sessionId, documentId: 'node-settlements', token: created.value.grant.token })).ok).toBe(true);
+    expect((await server.application.connectRealtime.execute({ sessionId, documentId: 'node-settlements', token: created.value.grant.token })).ok).toBe(true);
     try {
       await Promise.all(Array.from({ length: 8 }, () => server.application.completeTurn.execute({ sessionId, turnId: 'same-node-turn' })));
       expect(h.repository.rows.get(sessionId)?.usage.turns).toBe(1);
       expect(h.events.events.filter(event => event.type === 'TurnCompleted')).toHaveLength(1);
       const input = call(sessionId);
-      expect(await server.application.reviewToolCall.execute({ ...input, arguments: {}, userInputs: 0 })).toMatchObject({ kind: 'allow' });
+      expect(await server.application.reviewToolCall.execute({ ...input, arguments: {} })).toMatchObject({ kind: 'allow' });
       await Promise.all([
         server.application.recordToolResult.execute({ ...input, ok: true }),
         server.application.completeTurn.execute({ sessionId, turnId: input.turnId }),
@@ -50,8 +49,8 @@ describe('durable usage audit delivery', () => {
     expect(h.events.events.filter(event => event.type === 'TurnCompleted')).toHaveLength(0);
 
     const recovered = restarted(h);
-    await recovered.retryPublication(sessionId);
-    await recovered.retryPublication(sessionId);
+    await recovered.execute(sessionId);
+    await recovered.execute(sessionId);
     await h.app.completeTurn.execute({ sessionId, turnId: 'turn-delivery' });
     expect(h.repository.rows.get(sessionId)?.usage.turns).toBe(1);
     expect(h.events.events.filter(event => event.type === 'TurnCompleted')).toHaveLength(1);
@@ -64,14 +63,14 @@ describe('durable usage audit delivery', () => {
     const h = harness();
     const { sessionId } = await connected(h);
     const input = call(sessionId);
-    expect(await h.app.reviewToolCall.execute({ ...input, arguments: {}, userInputs: 0 })).toMatchObject({ kind: 'allow' });
+    expect(await h.app.reviewToolCall.execute({ ...input, arguments: {} })).toMatchObject({ kind: 'allow' });
     vi.spyOn(h.events, 'publish').mockRejectedValueOnce(new Error('audit unavailable'));
     await expect(h.app.recordToolResult.execute({ ...input, ok: true })).rejects.toThrow('audit unavailable');
     expect(h.repository.rows.get(sessionId)?.usage.toolCalls).toBe(1);
 
     const recovered = restarted(h);
-    await recovered.retryPublication(sessionId);
-    await recovered.retryPublication(sessionId);
+    await recovered.execute(sessionId);
+    await recovered.execute(sessionId);
     await h.app.recordToolResult.execute({ ...input, ok: true });
     expect(h.repository.rows.get(sessionId)?.usage.toolCalls).toBe(1);
     expect(h.events.events.filter(event => event.type === 'ToolCallReviewed')).toHaveLength(1);
@@ -99,8 +98,8 @@ describe('durable usage audit delivery', () => {
     });
     await expect(h.app.completeTurn.execute({ sessionId, turnId: 'turn-ack-loss' })).rejects.toThrow('publication acknowledgement lost');
     const recovered = restarted(h);
-    await recovered.retryPublication(sessionId);
-    await recovered.retryPublication(sessionId);
+    await recovered.execute(sessionId);
+    await recovered.execute(sessionId);
     expect(h.repository.rows.get(sessionId)?.usage.turns).toBe(1);
     expect(rows.size).toBe(1);
     expect(h.events.events.filter(event => event.type === 'TurnCompleted')).toHaveLength(1);
@@ -110,12 +109,12 @@ describe('durable usage audit delivery', () => {
     const h = harness();
     const { sessionId } = await connected(h);
     const input = call(sessionId);
-    expect(await h.app.reviewToolCall.execute({ ...input, arguments: {}, userInputs: 0 })).toMatchObject({ kind: 'allow' });
-    await h.app.endVoiceSession.bySystem(sessionId, 'disconnected');
+    expect(await h.app.reviewToolCall.execute({ ...input, arguments: {} })).toMatchObject({ kind: 'allow' });
+    await h.app.handleRealtimeDisconnect.execute(sessionId);
     const usage = structuredClone(h.repository.rows.get(sessionId)!.usage);
     vi.spyOn(h.events, 'publish').mockRejectedValueOnce(new Error('audit unavailable'));
     await expect(h.app.recordToolResult.execute({ ...input, ok: true })).rejects.toThrow('audit unavailable');
-    await restarted(h).retryPublication(sessionId);
+    await restarted(h).execute(sessionId);
     await h.app.recordToolResult.execute({ ...input, ok: true });
     await h.app.completeTurn.execute({ sessionId, turnId: input.turnId });
     const persisted = h.repository.rows.get(sessionId)!;

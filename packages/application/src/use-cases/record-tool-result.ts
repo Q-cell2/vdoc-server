@@ -1,3 +1,4 @@
+import type { SessionLifecycle } from '../session-lifecycle';
 import { ToolCallId, TurnId, VoiceSessionId } from '@vdoc-server/domain';
 import type { Clock } from '../ports';
 import type { VoiceSessionStore } from '../voice-session-store';
@@ -13,7 +14,7 @@ export interface RecordToolResultInput {
 
 /** Command: the app finished (or refused) a tool call; keep the audit trail complete. */
 export class RecordToolResult {
-  constructor(private readonly deps: { store: VoiceSessionStore; clock: Clock }) {}
+  constructor(private readonly deps: { store: VoiceSessionStore; lifecycle: SessionLifecycle; clock: Clock }) {}
 
   async execute(input: RecordToolResultInput): Promise<void> {
     const id = VoiceSessionId.parse(input.sessionId);
@@ -23,6 +24,7 @@ export class RecordToolResult {
     const session = await this.deps.store.findById(id.value);
     if (!session) return;
     session.recordToolResult({ id: callId.value, name: input.name, turnId: turnId.value }, { ok: input.ok, ...(input.code !== undefined ? { code: input.code } : {}) }, this.deps.clock.now());
-    await this.deps.store.commit(session);
+    const committed = await this.deps.lifecycle.persistAndDispatch(session);
+    if (!committed.ok) throw new Error(committed.error.message);
   }
 }

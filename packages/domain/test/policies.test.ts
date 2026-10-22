@@ -1,16 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { DocumentSessionPolicy, InstructionTemplate, SessionLimits } from '../src';
-import { activeSession } from './fixtures';
+import { DocumentSessionPolicy, InstructionTemplate, SessionLimits, PrincipalId, VoiceSession } from '../src';
+import { activeSession, principal } from './fixtures';
 
 describe('DocumentSessionPolicy', () => {
   it('admits freely below the limit', () => {
-    expect(new DocumentSessionPolicy().admit([])).toEqual({ ok: true, value: [] });
+    expect(new DocumentSessionPolicy().admit([], principal)).toEqual({ ok: true, value: [] });
+  });
+
+  it('keeps different users exclusive even below the document limit', () => {
+    const clientSession = activeSession();
+    const owner = { id: PrincipalId.assume('user-a'), kind: 'user' as const, name: 'A' };
+    const userSession = VoiceSession.restore({ ...clientSession.toSnapshot(), principalId: owner.id, principalKind: 'user' });
+    const policy = new DocumentSessionPolicy('supersede', 3);
+    expect(policy.admit([userSession], owner)).toEqual({ ok: true, value: [] });
+    expect(policy.admit([userSession], { ...owner, id: PrincipalId.assume('user-b') })).toMatchObject({ ok: false, error: { code: 'DOCUMENT_BUSY' } });
+    expect(policy.admit([userSession], { ...owner, kind: 'client' })).toEqual({ ok: true, value: [] });
+    expect(policy.admit([userSession], { id: PrincipalId.assume('other-client'), kind: 'client', name: 'C' }).ok).toBe(false);
+    expect(policy.admit([clientSession], owner).ok).toBe(false);
+    expect(policy.admit([clientSession], { id: PrincipalId.assume('other-client'), kind: 'client', name: 'C' }).ok).toBe(true);
   });
 
   it('supersedes the oldest open session, or rejects, depending on strategy', () => {
     const open = [activeSession()];
-    expect(new DocumentSessionPolicy('supersede').admit(open)).toEqual({ ok: true, value: open });
-    expect(new DocumentSessionPolicy('reject').admit(open)).toMatchObject({ ok: false, error: { code: 'DOCUMENT_BUSY' } });
+    expect(new DocumentSessionPolicy('supersede').admit(open, principal)).toEqual({ ok: true, value: open });
+    expect(new DocumentSessionPolicy('reject').admit(open, principal)).toMatchObject({ ok: false, error: { code: 'DOCUMENT_BUSY' } });
   });
 });
 

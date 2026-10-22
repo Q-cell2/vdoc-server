@@ -1,28 +1,29 @@
-import type { EventPublisher, RealtimeConnections } from '@vdoc-server/application';
+import { migrateSessionRecord } from '@vdoc-server/application';
+import type { EventPublisher, RealtimeConnections, SessionRepository, SessionRecord } from '@vdoc-server/application';
 import {
   VoiceSession,
   type AgentProfile, type AgentProfileRepository, type DocumentId, type DomainEvent, type EndReason, type ProfileId,
-  type VoiceSessionId, type VoiceSessionRepository, type VoiceSessionSnapshot,
+  type VoiceSessionId,
 } from '@vdoc-server/domain';
 
 /** Stores snapshots, not objects, so callers cannot mutate stored state by accident (same as a real store). */
-export class InMemoryVoiceSessionRepository implements VoiceSessionRepository {
-  readonly #rows = new Map<string, VoiceSessionSnapshot>();
-
+export class InMemoryVoiceSessionRepository implements SessionRepository {
+  readonly #rows = new Map<string, SessionRecord>();
+  async getRecord(id: string): Promise<SessionRecord | undefined> { return structuredClone(this.#rows.get(id)); }
+  async putRecord(record: SessionRecord): Promise<void> { this.#rows.set(record.session.id, structuredClone(record)); }
+  async *records(): AsyncGenerator<SessionRecord> { for (const row of this.#rows.values()) yield structuredClone(row); }
+  async removeRecords(ids: readonly string[]): Promise<void> { for (const id of ids) this.#rows.delete(id); }
+  async schedule(_nextWakeAt: number | undefined): Promise<void> {}
   async get(id: VoiceSessionId): Promise<VoiceSession | undefined> {
-    const row = this.#rows.get(id);
-    return row && VoiceSession.restore(structuredClone(row));
+    const record = await this.getRecord(id); return record && VoiceSession.restore(record.session);
   }
-
   async findUnended(documentId: DocumentId): Promise<VoiceSession[]> {
-    return [...this.#rows.values()]
-      .filter((row) => row.documentId === documentId && row.status !== 'ended')
-      .sort((a, b) => a.createdAt - b.createdAt)
-      .map((row) => VoiceSession.restore(structuredClone(row)));
+    return [...this.#rows.values()].filter(r => r.session.documentId === documentId && r.session.status !== 'ended')
+      .sort((a, b) => a.session.createdAt - b.session.createdAt).map(r => VoiceSession.restore(structuredClone(r.session)));
   }
-
   async save(session: VoiceSession): Promise<void> {
-    this.#rows.set(session.id, structuredClone(session.toSnapshot()));
+    const previous = await this.getRecord(session.id);
+    await this.putRecord(previous ? { ...previous, session: session.toSnapshot() } : migrateSessionRecord(session.toSnapshot()));
   }
 }
 

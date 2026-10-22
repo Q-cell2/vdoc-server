@@ -30,6 +30,7 @@ describe('GrantVoiceSession', () => {
     expect(await h.app.grantVoiceSession.execute({ credentials: as(bob), documentId: 'doc-1' })).toMatchObject({ ok: false, error: { code: 'DOCUMENT_BUSY' } });
     h.clock.advance(5_000);
     expect((await h.app.grantVoiceSession.execute({ credentials: as(bob), documentId: 'doc-1' })).ok).toBe(true);
+    await h.app.sessionMaintenance.execute();
     expect(h.events.events.filter((e) => e.type === 'VoiceSessionEnded')).toMatchObject([{ reason: 'expired' }]);
   });
 });
@@ -56,30 +57,30 @@ describe('RenewSessionGrant and GetVoiceSession', () => {
   it('refuse to renew an ended session', async () => {
     const h = harness();
     const { sessionId } = await connected(h);
-    await h.app.endVoiceSession.byClient({ credentials: as(alice), documentId: 'doc-1', sessionId });
+    await h.app.endVoiceSession.execute({ credentials: as(alice), documentId: 'doc-1', sessionId });
     expect(await h.app.renewSessionGrant.execute({ credentials: as(alice), documentId: 'doc-1', sessionId })).toMatchObject({ ok: false, error: { code: 'SESSION_CLOSED' } });
   });
 });
 
-describe('AuthorizeRealtimeConnection', () => {
+describe('ConnectRealtime', () => {
   it('accepts the grant only for its own route and only before it expires', async () => {
     const h = harness();
     const granted = await h.app.grantVoiceSession.execute({ credentials: as(alice), documentId: 'doc-1' });
     if (!granted.ok) throw new Error();
     const { token } = granted.value.grant;
     const { sessionId } = granted.value.session;
-    expect(await h.app.authorizeRealtimeConnection.execute({ token: undefined, documentId: 'doc-1', sessionId })).toMatchObject({ ok: false, error: { code: 'GRANT_INVALID' } });
-    expect(await h.app.authorizeRealtimeConnection.execute({ token, documentId: 'doc-2', sessionId })).toMatchObject({ ok: false, error: { code: 'GRANT_INVALID' } });
-    expect(await h.app.authorizeRealtimeConnection.execute({ token, documentId: 'doc-1', sessionId })).toMatchObject({ ok: true, value: { sessionId, principalId: 'alice' } });
+    expect(await h.app.connectRealtime.execute({ token: undefined, documentId: 'doc-1', sessionId })).toMatchObject({ ok: false, error: { code: 'GRANT_INVALID' } });
+    expect(await h.app.connectRealtime.execute({ token, documentId: 'doc-2', sessionId })).toMatchObject({ ok: false, error: { code: 'GRANT_INVALID' } });
+    expect(await h.app.connectRealtime.execute({ token, documentId: 'doc-1', sessionId })).toMatchObject({ ok: true, value: { sessionId, principalId: 'alice' } });
     h.clock.advance(60_000);
-    expect(await h.app.authorizeRealtimeConnection.execute({ token, documentId: 'doc-1', sessionId })).toMatchObject({ ok: false, error: { code: 'GRANT_INVALID' } });
+    expect(await h.app.connectRealtime.execute({ token, documentId: 'doc-1', sessionId })).toMatchObject({ ok: false, error: { code: 'GRANT_INVALID' } });
   });
 
   it('refuses ended sessions even with a fresh-looking grant', async () => {
     const h = harness();
     const { sessionId, token } = await connected(h);
-    await h.app.endVoiceSession.bySystem(sessionId, 'disconnected');
-    expect(await h.app.authorizeRealtimeConnection.execute({ token, documentId: 'doc-1', sessionId })).toMatchObject({ ok: false, error: { code: 'SESSION_CLOSED' } });
+    await h.app.handleRealtimeDisconnect.execute(sessionId);
+    expect(await h.app.connectRealtime.execute({ token, documentId: 'doc-1', sessionId })).toMatchObject({ ok: false, error: { code: 'SESSION_CLOSED' } });
   });
 });
 
@@ -106,11 +107,11 @@ describe('ReviewToolCall, RecordToolResult and CompleteTurn', () => {
     const h = harness();
     const { sessionId } = await connected(h);
     h.events.publish = async () => { throw new Error('audit unavailable'); };
-    await expect(h.app.endVoiceSession.bySystem(sessionId, 'disconnected')).rejects.toThrow('audit unavailable');
+    await expect(h.app.handleRealtimeDisconnect.execute(sessionId)).rejects.toThrow('audit unavailable');
     expect(h.repository.rows.get(sessionId)?.status).toBe('ended');
     expect(h.connections.closed).toEqual([{ sessionId, reason: 'disconnected' }]);
   });
-  const call = (sessionId: string, name: string, args: unknown = {}, turnId = 't1') => ({ sessionId, callId: `c-${Math.random().toString(36).slice(2)}`, name, arguments: args, turnId, userInputs: 0 });
+  const call = (sessionId: string, name: string, args: unknown = {}, turnId = 't1') => ({ sessionId, callId: `c-${Math.random().toString(36).slice(2)}`, name, arguments: args, turnId });
 
   it('reviews calls against the profile and keeps a content-free audit trail', async () => {
     const h = harness();
@@ -130,6 +131,7 @@ describe('ReviewToolCall, RecordToolResult and CompleteTurn', () => {
     expect(await h.app.reviewToolCall.execute(destructive('t1', 1))).toMatchObject({ kind: 'confirm' });
     expect(await h.app.reviewToolCall.execute(destructive('t2', 1))).toMatchObject({ kind: 'confirm' });
     expect(await h.app.reviewToolCall.execute(destructive('t3', Number.NaN))).toMatchObject({ kind: 'confirm' });
+    await h.app.recordUserInput.execute({ sessionId });
     expect(await h.app.reviewToolCall.execute(destructive('t4', 2))).toEqual({ kind: 'allow', risk: 'high' });
   });
 
@@ -139,6 +141,7 @@ describe('ReviewToolCall, RecordToolResult and CompleteTurn', () => {
     const { sessionId } = await connected(h);
     h.clock.advance(10_000);
     expect(await h.app.reviewToolCall.execute(call(sessionId, 'read_document'))).toMatchObject({ kind: 'deny', code: 'SESSION_CLOSED' });
+    await h.app.sessionMaintenance.execute();
     expect(h.connections.closed).toEqual([{ sessionId, reason: 'limit-duration' }]);
   });
 

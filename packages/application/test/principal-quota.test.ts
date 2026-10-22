@@ -10,7 +10,7 @@ describe('per-principal admission across documents', () => {
     const first = await connected(h);
     expect((await h.app.renewSessionGrant.execute({ credentials: as(alice), ...first })).ok).toBe(true);
     expect(h.quotas.states.get(alice.id)?.starts).toHaveLength(1);
-    await h.app.endVoiceSession.bySystem(first.sessionId, 'disconnected');
+    await h.app.handleRealtimeDisconnect.execute(first.sessionId);
     expect(await grant(h, 'two')).toMatchObject({ ok: false, error: { code: 'QUOTA_EXCEEDED', retryAfterSeconds: 3600 } });
     h.clock.advance(3_600_000);
     expect((await grant(h, 'two')).ok).toBe(true);
@@ -24,7 +24,7 @@ describe('per-principal admission across documents', () => {
     const first = await connected(h, 'one');
     expect(await grant(h, 'two')).toMatchObject({ ok: false, error: { code: 'QUOTA_EXCEEDED', retryAfterSeconds: 1800 } });
     expect((await grant(h, 'two', bob)).ok).toBe(true);
-    await h.app.endVoiceSession.bySystem(first.sessionId, 'disconnected');
+    await h.app.handleRealtimeDisconnect.execute(first.sessionId);
     expect((await grant(h, 'three')).ok).toBe(true);
   });
   it('preserves same-document supersession at the concurrency cap, while rate rejection preserves the old session', async () => {
@@ -56,24 +56,24 @@ describe('per-principal admission across documents', () => {
     expect(h.quotas.states.get(alice.id)?.starts).toHaveLength(1);
     const failed = harness({ signer: { sign: async () => { throw new Error('signing unavailable'); }, verify: async () => undefined } });
     await expect(grant(failed, 'one')).rejects.toThrow('signing unavailable');
-    expect(failed.quotas.states.size).toBe(0);
+    expect(failed.quotas.states.get(alice.id)?.starts).toHaveLength(0);
   });
   it('releases ended slots and closes sockets even if an audit subscriber fails', async () => {
     const h = harness({ quotaLimits: limits });
     const first = await connected(h);
     vi.spyOn(h.events, 'publish').mockRejectedValueOnce(new Error('audit unavailable'));
-    await expect(h.app.endVoiceSession.bySystem(first.sessionId, 'limit-duration')).rejects.toThrow('audit unavailable');
-    expect(h.connections.closed).toContainEqual({ sessionId: first.sessionId, reason: 'limit-duration' });
+    await expect(h.app.handleRealtimeDisconnect.execute(first.sessionId)).rejects.toThrow('audit unavailable');
+    expect(h.connections.closed).toContainEqual({ sessionId: first.sessionId, reason: 'disconnected' });
     expect((await grant(h, 'two')).ok).toBe(true);
   });
   it('closes despite release failure and retries release without duplicating the end event', async () => {
     const h = harness({ quotaLimits: limits });
     const first = await connected(h);
     const release = vi.spyOn(h.quotas, 'release').mockRejectedValueOnce(new Error('quota release unavailable'));
-    await expect(h.app.endVoiceSession.bySystem(first.sessionId, 'disconnected')).rejects.toThrow('Voice quota service is temporarily unavailable.');
+    await expect(h.app.handleRealtimeDisconnect.execute(first.sessionId)).rejects.toThrow('Voice quota service is temporarily unavailable.');
     expect(h.repository.rows.get(first.sessionId)?.status).toBe('ended');
     expect(h.connections.closed).toEqual([{ sessionId: first.sessionId, reason: 'disconnected' }]);
-    await h.app.endVoiceSession.bySystem(first.sessionId, 'disconnected');
+    await h.app.handleRealtimeDisconnect.execute(first.sessionId);
     expect(release).toHaveBeenCalledTimes(2);
     expect(h.events.events.filter(event => event.type === 'VoiceSessionEnded')).toHaveLength(1);
     expect(h.connections.closed).toHaveLength(1);
@@ -91,14 +91,14 @@ describe('per-principal admission across documents', () => {
 
   it('cancels an unpersisted creation but retains a persisted start when acknowledgement is ambiguous', async () => {
     const h = harness({ quotaLimits: { maxConcurrentSessions: 1, maxSessionsPerHour: 1 } });
-    vi.spyOn(h.repository, 'save').mockRejectedValueOnce(new Error('save failed'));
+    vi.spyOn(h.repository, 'putRecord').mockRejectedValueOnce(new Error('save failed'));
     await expect(grant(h, 'failed')).rejects.toThrow('save failed');
     expect(h.quotas.states.get(alice.id)?.starts).toHaveLength(0);
     expect((await grant(h, 'retry')).ok).toBe(true);
 
     const ambiguous = harness({ quotaLimits: { maxConcurrentSessions: 1, maxSessionsPerHour: 1 } });
-    const save = ambiguous.repository.save.bind(ambiguous.repository);
-    vi.spyOn(ambiguous.repository, 'save').mockImplementationOnce(async (session) => { await save(session); throw new Error('ack lost'); });
+    const save = ambiguous.repository.putRecord.bind(ambiguous.repository);
+    vi.spyOn(ambiguous.repository, 'putRecord').mockImplementationOnce(async (session) => { await save(session); throw new Error('ack lost'); });
     await expect(grant(ambiguous, 'persisted')).rejects.toThrow('ack lost');
     expect(ambiguous.quotas.states.get(alice.id)?.starts).toMatchObject([{ confirmed: true }]);
     expect(await grant(ambiguous, 'retry')).toMatchObject({ ok: false, error: { code: 'QUOTA_EXCEEDED' } });
@@ -106,8 +106,8 @@ describe('per-principal admission across documents', () => {
 
   it('keeps a bounded pending hold if creation and readback both fail', async () => {
     const h = harness({ quotaLimits: { maxConcurrentSessions: 1, maxSessionsPerHour: 1 } });
-    vi.spyOn(h.repository, 'save').mockRejectedValueOnce(new Error('storage down'));
-    vi.spyOn(h.repository, 'get').mockRejectedValueOnce(new Error('storage down'));
+    vi.spyOn(h.repository, 'putRecord').mockRejectedValueOnce(new Error('storage down'));
+    vi.spyOn(h.repository, 'getRecord').mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('storage down'));
     await expect(grant(h, 'uncertain')).rejects.toThrow('storage down');
     expect(await grant(h, 'blocked')).toMatchObject({ ok: false, error: { code: 'QUOTA_EXCEEDED' } });
     h.clock.advance(60_002);
@@ -120,7 +120,7 @@ describe('per-principal admission across documents', () => {
     await expect(grant(h, 'one')).rejects.toThrow('audit failed');
     const sessionId = [...h.repository.rows.keys()][0]!;
     expect(h.quotas.states.get(alice.id)?.starts).toMatchObject([{ confirmed: true }]);
-    await h.app.endVoiceSession.byClient({ credentials: as(alice), documentId: 'one', sessionId });
+    await h.app.endVoiceSession.execute({ credentials: as(alice), documentId: 'one', sessionId });
     expect(h.quotas.states.get(alice.id)?.slots).toHaveLength(0);
     expect(await grant(h, 'two')).toMatchObject({ ok: false, error: { quotaKind: 'rate' } });
   });

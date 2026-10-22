@@ -3,10 +3,8 @@ import type { DomainEvent } from '@vdoc-server/domain';
 import type { Logger } from './index';
 
 const FIELDS: Readonly<Record<string, { metric: string; strings: readonly string[]; numbers: readonly string[] }>> = {
-  TurnCompleted: {
-    metric: 'turn.completed', strings: ['turnId'],
-    numbers: ['toolCalls', 'modelToolCalls', 'timeToFirstAudioMs', 'timeToFirstToolCallMs', 'interruptLatencyMs'],
-  },
+  TurnCompleted: { metric: 'turn.completed', strings: ['turnId'], numbers: ['toolCalls'] },
+  TurnTelemetry: { metric: 'turn.telemetry', strings: ['turnId'], numbers: ['modelToolCalls', 'timeToFirstAudioMs', 'timeToFirstToolCallMs', 'interruptLatencyMs'] },
   ToolCallReviewed: { metric: 'tool.reviewed', strings: ['turnId', 'callId', 'tool', 'risk', 'decision', 'code'], numbers: [] },
   ToolCallCompleted: { metric: 'tool.completed', strings: ['turnId', 'callId', 'tool', 'code'], numbers: [] },
 };

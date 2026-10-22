@@ -44,14 +44,7 @@ export class DocumentVoiceRoom extends DurableObject<Env> {
 
   override async alarm(): Promise<void> {
     const server = await this.#start();
-    const overdue = await this.#commands.run(() => this.#sessions.findOverdue());
-    try {
-      for (const id of overdue) await server.application.endVoiceSession.expireIfOverdue(id);
-      const pending = await this.#commands.run(() => this.#sessions.findPendingPublications());
-      for (const id of pending) await server.application.endVoiceSession.retryPublication(id);
-    } finally {
-      await this.#commands.run(() => this.#sessions.pruneAndSchedule());
-    }
+    await server.application.sessionMaintenance.execute();
   }
 
   override async fetch(request: Request): Promise<Response> {

@@ -1,3 +1,4 @@
+import { SessionMaintenance, ExpireVoiceSession, VoiceSessionStore, SessionLifecycle, RelaySessionOutbox, type SessionRecord } from '@vdoc-server/application';
 import { AgentProfile, DocumentId, InstructionTemplate, PrincipalId, ProfileId, SessionLimits, VoiceSession, VoiceSessionId } from '@vdoc-server/domain';
 import { describe, expect, it } from 'vitest';
 import { DurableObjectVoiceSessionRepository, type KeyValueStorage, type StorageTransaction, SerialCommandQueue } from '../src';
@@ -59,7 +60,7 @@ describe('DurableObjectVoiceSessionRepository', () => {
     const fresh = session('vs_new', 'doc', 5_000);
     fresh.end('client', 5_000);
     await repo.save(fresh);
-    await repo.pruneAndSchedule();
+    await maintenance(repo, () => now).prune();
     expect([...storage.map.keys()]).toEqual(['voice-session:vs_new']);
   });
 });
@@ -105,17 +106,17 @@ describe('Durable Object lifecycle', () => {
     await repo.save(value);
     const originalDeadline = value.toSnapshot().connectDeadline;
     now = originalDeadline;
-    expect(await repo.findOverdue()).toEqual([]);
+    expect(await overdue(repo, now)).toEqual([]);
     value.issueGrant(now);
     await repo.save(value);
     now++;
-    expect(await repo.findOverdue()).toEqual([]);
-    await repo.pruneAndSchedule();
+    expect(await overdue(repo, now)).toEqual([]);
+    await maintenance(repo, () => now).prune();
     expect(storage.alarm).toBe(value.toSnapshot().connectDeadline + 1);
     value.connect(now);
     await repo.save(value);
     now += value.limits.maxDurationMs;
-    expect(await repo.findOverdue()).toEqual([value.id]);
+    expect(await overdue(repo, now)).toEqual([value.id]);
   });
 
   it('cleans up more than one page with no new saves, preserving live and recent sessions', async () => {
@@ -132,7 +133,7 @@ describe('Durable Object lifecycle', () => {
     recent.end('client', now);
     await repo.save(live);
     await repo.save(recent);
-    await repo.pruneAndSchedule();
+    await maintenance(repo, () => now).prune();
     expect([...storage.map.keys()]).toEqual(['voice-session:vs_live', 'voice-session:vs_recent']);
     expect(storage.deleteSizes).toEqual([128, 128, 44]);
     expect(storage.alarm).toBe(now + 1_001);
@@ -144,17 +145,17 @@ describe('Durable Object lifecycle', () => {
     const repo = new DurableObjectVoiceSessionRepository(storage, 1000, () => now);
     const value = session('vs_pending', 'doc', 0);
     value.end('client', 0);
-    value.stageAuditEvents(value.pullEvents());
-    await repo.save(value);
-    await repo.pruneAndSchedule();
+    const legacy = { ...value.toSnapshot(), pendingAuditEvents: value.pullEvents(), nextAuditSequence: 2 };
+    await storage.put('voice-session:' + value.id, legacy);
+    await maintenance(repo, () => now).prune();
     expect(storage.map.size).toBe(1);
     expect(storage.alarm).toBe(now + 30_000);
     now += 1000;
-    await repo.pruneAndSchedule();
+    await maintenance(repo, () => now).prune();
     expect(storage.alarm).toBe(now + 30_000);
-    value.acknowledgeAuditEvents();
-    await repo.save(value);
-    await repo.pruneAndSchedule();
+    const record = await repo.getRecord(value.id) as SessionRecord;
+    await repo.putRecord({ ...record, outbox: [] });
+    await maintenance(repo, () => now).prune();
     expect(storage.map.size).toBe(0);
     expect(storage.alarm).toBeNull();
   });
@@ -167,8 +168,8 @@ describe('Durable Object lifecycle', () => {
     value.end('client', 0);
     await repo.save(value);
     now = 1_001;
-    await repo.pruneAndSchedule();
-    await repo.pruneAndSchedule();
+    await maintenance(repo, () => now).prune();
+    await maintenance(repo, () => now).prune();
     expect(storage.map.size).toBe(0);
     expect(storage.alarm).toBeNull();
   });
@@ -191,3 +192,15 @@ describe('SerialCommandQueue', () => {
     expect(events).toEqual(['first', 'second']);
   });
 });
+
+function maintenance(repo: DurableObjectVoiceSessionRepository, now: () => number) {
+  const clock = { now };
+  const relay = new RelaySessionOutbox(repo, [], { publish: async () => {} }, clock);
+  const store = new VoiceSessionStore(repo, clock);
+  return new SessionMaintenance(repo, new ExpireVoiceSession(store, new SessionLifecycle(store, relay), clock), relay, clock, 1000);
+}
+async function overdue(repo: DurableObjectVoiceSessionRepository, now: number) {
+  const ids: string[] = [];
+  for await (const row of repo.records()) if (row.session.status !== 'ended' && !VoiceSession.restore(row.session).isOpenAt(now)) ids.push(row.session.id);
+  return ids;
+}

@@ -1,9 +1,11 @@
+import type { SessionLifecycle } from '../session-lifecycle';
 import { DocumentId, VoiceSessionId, err, ok, type Result } from '@vdoc-server/domain';
 import { appError, fromDomain, type AppError } from '../errors';
 import type { Clock, GrantSigner } from '../ports';
-import { QuotaUnavailable, quotaUnavailable, type VoiceSessionStore } from '../voice-session-store';
+import type { VoiceSessionStore } from '../voice-session-store';
+import type { SessionQuotaService } from '../session-quota-service';
 
-export interface AuthorizeRealtimeConnectionInput {
+export interface ConnectRealtimeInput {
   /** `hello.auth` from the realtime client. */
   readonly token: string | undefined;
   /** From the connection's route; the grant must be scoped to exactly these. */
@@ -20,10 +22,10 @@ export interface RealtimeIdentity {
 }
 
 /** Command: a realtime connection (new or resumed) presents its grant. */
-export class AuthorizeRealtimeConnection {
-  constructor(private readonly deps: { store: VoiceSessionStore; signer: GrantSigner; clock: Clock }) {}
+export class ConnectRealtime {
+  constructor(private readonly deps: { store: VoiceSessionStore; lifecycle: SessionLifecycle; quotas: SessionQuotaService; signer: GrantSigner; clock: Clock }) {}
 
-  async execute(input: AuthorizeRealtimeConnectionInput): Promise<Result<RealtimeIdentity, AppError>> {
+  async execute(input: ConnectRealtimeInput): Promise<Result<RealtimeIdentity, AppError>> {
     const { store, signer, clock } = this.deps;
     const grant = input.token ? await signer.verify(input.token) : undefined;
     if (!grant) return err(appError('GRANT_INVALID', 'A valid session grant is required.'));
@@ -38,17 +40,11 @@ export class AuthorizeRealtimeConnection {
     if (!session || session.documentId !== documentId.value || !session.isOwnedBy(grant.principalId)) return err(appError('GRANT_INVALID', 'A valid session grant is required.'));
     const connected = session.connect(now);
     if (!connected.ok) {
-      session.expireIfOverdue(now);
-      await store.commit(session);
       return err(fromDomain(connected.error));
     }
-    const reserved = await store.reserveQuota(session);
-    if (!reserved.ok) return reserved;
-    try { await store.commit(session); }
-    catch (error) {
-      if (error instanceof QuotaUnavailable) return err(quotaUnavailable());
-      throw error;
-    }
-    return ok({ sessionId: session.id, documentId: session.documentId, principalId: session.principalId, profileId: session.profileId });
+    return this.deps.quotas.withReservation(session, {}, async () => {
+      const committed = await this.deps.lifecycle.persistAndDispatch(session);
+      return committed.ok ? ok({ sessionId: session.id, documentId: session.documentId, principalId: session.principalId, profileId: session.profileId }) : committed;
+    });
   }
 }

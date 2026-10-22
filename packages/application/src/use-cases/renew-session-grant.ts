@@ -1,7 +1,9 @@
+import type { SessionLifecycle } from '../session-lifecycle';
 import { err, ok, type Result } from '@vdoc-server/domain';
 import { fromDomain, type AppError } from '../errors';
 import type { CallerAuthenticator, CallerCredentials, Clock, GrantSigner } from '../ports';
-import { QuotaUnavailable, quotaUnavailable, type VoiceSessionStore } from '../voice-session-store';
+import type { VoiceSessionStore } from '../voice-session-store';
+import type { SessionQuotaService } from '../session-quota-service';
 import { authenticateCaller } from './caller';
 import type { GrantView } from './views';
 
@@ -13,7 +15,7 @@ export interface RenewSessionGrantInput {
 
 /** Command: a fresh short-lived grant, e.g. before every reconnect. */
 export class RenewSessionGrant {
-  constructor(private readonly deps: { store: VoiceSessionStore; authenticator: CallerAuthenticator; signer: GrantSigner; clock: Clock }) {}
+  constructor(private readonly deps: { store: VoiceSessionStore; lifecycle: SessionLifecycle; quotas: SessionQuotaService; authenticator: CallerAuthenticator; signer: GrantSigner; clock: Clock }) {}
 
   async execute(input: RenewSessionGrantInput): Promise<Result<GrantView, AppError>> {
     const { store, authenticator, signer, clock } = this.deps;
@@ -24,19 +26,13 @@ export class RenewSessionGrant {
     const now = clock.now();
     const grant = session.value.issueGrant(now);
     if (!grant.ok) {
-      session.value.expireIfOverdue(now);
-      await store.commit(session.value);
       return err(fromDomain(grant.error));
     }
-    const token = await signer.sign(grant.value);
-    const reserved = await store.reserveQuota(session.value, [], input.credentials.requestId);
-    if (!reserved.ok) return reserved;
-    session.value.recordGrantRenewal(now);
-    try { await store.commit(session.value, input.credentials.requestId); }
-    catch (error) {
-      if (error instanceof QuotaUnavailable) return err(quotaUnavailable());
-      throw error;
-    }
-    return ok({ token, expiresAt: grant.value.expiresAt });
+    return this.deps.quotas.withReservation(session.value, { requestId: input.credentials.requestId }, async () => {
+      const token = await signer.sign(grant.value);
+      session.value.recordGrantRenewal(now);
+      const committed = await this.deps.lifecycle.persistAndDispatch(session.value, input.credentials.requestId);
+      return committed.ok ? ok({ token, expiresAt: grant.value.expiresAt }) : committed;
+    });
   }
 }

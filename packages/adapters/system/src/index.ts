@@ -1,5 +1,5 @@
-import type { Clock, EventPublisher, IdGenerator } from '@vdoc-server/application';
-import type { DomainEvent } from '@vdoc-server/domain';
+import type { Clock, EventPublisher, IdGenerator, RealtimeConnections } from '@vdoc-server/application';
+import type { DomainEvent, EndReason, VoiceSessionId } from '@vdoc-server/domain';
 export { TurnMetricsPublisher } from './metrics';
 
 export const systemClock: Clock = { now: () => Date.now() };
@@ -52,5 +52,16 @@ export class CompositeEventPublisher implements EventPublisher {
 
   async publish(events: readonly DomainEvent[]): Promise<void> {
     await Promise.all(this.publishers.map((publisher) => publisher.publish(events)));
+  }
+}
+
+/** In-process transport events decouple application construction from runtime ownership. */
+export class RealtimeConnectionEvents implements RealtimeConnections {
+  readonly #listeners = new Set<(sessionId: VoiceSessionId, reason: EndReason) => Promise<void>>();
+  subscribe(listener: (sessionId: VoiceSessionId, reason: EndReason) => Promise<void>): () => void {
+    this.#listeners.add(listener); return () => { this.#listeners.delete(listener); };
+  }
+  async close(sessionId: VoiceSessionId, reason: EndReason): Promise<void> {
+    await Promise.all([...this.#listeners].map(listener => listener(sessionId, reason)));
   }
 }

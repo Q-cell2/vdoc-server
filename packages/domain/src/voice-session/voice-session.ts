@@ -3,13 +3,13 @@ import { SessionGrant } from '../access/session-grant';
 import type { AgentProfile } from '../agent-profile/agent-profile';
 import {
   AggregateRoot, DocumentId, PrincipalId, ProfileId, TurnId, VoiceSessionId,
-  domainError, err, ok, type DomainError, type DomainEvent, type Result,
+  domainError, err, ok, type DomainError, type Result,
 } from '../shared';
 import type { RiskAssessor } from '../tool-governance/risk';
 import { fingerprint, type ToolCall } from '../tool-governance/tool-call';
 import type { ToolDecision } from '../tool-governance/tool-decision';
 import type { ToolPolicy } from '../tool-governance/tool-policy';
-import type { EndReason, TurnMetrics, VoiceSessionEvent } from './events';
+import type { EndReason, VoiceSessionEvent } from './events';
 import type { SessionLimits } from './session-limits';
 import { Usage } from './usage';
 
@@ -30,9 +30,6 @@ export interface VoiceSessionSnapshot {
   readonly documentId: string;
   readonly principalId: string;
   readonly principalKind?: Principal['kind'];
-  readonly clientId?: string;
-  readonly userId?: string;
-  readonly requestId?: string;
   readonly completedTurnIds?: readonly string[];
   readonly completedToolCallIds?: readonly string[];
   readonly toolDecisions?: Readonly<Record<string, { readonly fingerprint: string; readonly turnId: string; readonly decision: ToolDecision }>>;
@@ -45,8 +42,7 @@ export interface VoiceSessionSnapshot {
   readonly startedAt: number | null;
   readonly endedAt: number | null;
   readonly endReason: EndReason | null;
-  readonly pendingAuditEvents?: readonly DomainEvent[];
-  readonly nextAuditSequence?: number;
+  readonly userInputs?: number;
   readonly pendingConfirmations: readonly PendingConfirmation[];
 }
 
@@ -78,12 +74,11 @@ export class VoiceSession extends AggregateRoot<VoiceSessionEvent> {
     super();
   }
 
-  static grant(input: { id: VoiceSessionId; documentId: DocumentId; principal: Principal; profile: AgentProfile; now: number; requestId?: string }): VoiceSession {
+  static grant(input: { id: VoiceSessionId; documentId: DocumentId; principal: Principal; profile: AgentProfile; now: number }): VoiceSession {
     const { id, documentId, principal, profile, now } = input;
     const session = new VoiceSession({
       id, documentId, principalId: principal.id, principalKind: principal.kind,
-      clientId: principal.clientId ?? principal.id, ...(principal.userId ? { userId: principal.userId } : {}),
-      ...(input.requestId ? { requestId: input.requestId } : {}), profileId: profile.id, status: 'granted',
+      profileId: profile.id, status: 'granted',
       limits: profile.limits, usage: Usage.empty, createdAt: now, connectDeadline: now + Math.min(profile.limits.grantTtlMs, profile.limits.maxDurationMs),
       startedAt: null, endedAt: null, endReason: null, pendingConfirmations: [],
     });
@@ -99,21 +94,26 @@ export class VoiceSession extends AggregateRoot<VoiceSessionEvent> {
     return this.state;
   }
 
-  /** Durable outbox: the repository saves delivery state together with usage/idempotency. */
-  stageAuditEvents(events: readonly DomainEvent[]): readonly DomainEvent[] {
-    let sequence = this.state.nextAuditSequence ?? 0;
-    const pendingAuditEvents = [...(this.state.pendingAuditEvents ?? []), ...events.map((event) => ({
-      ...event, eventId: `${this.state.id}:event:${sequence++}`,
-    }))];
-    this.state = { ...this.state, pendingAuditEvents, nextAuditSequence: sequence };
-    return pendingAuditEvents;
-  }
-
-  acknowledgeAuditEvents(): void { this.state = { ...this.state, pendingAuditEvents: [] }; }
-
   get id(): VoiceSessionId { return VoiceSessionId.assume(this.state.id); }
   get documentId(): DocumentId { return DocumentId.assume(this.state.documentId); }
   get principalId(): PrincipalId { return PrincipalId.assume(this.state.principalId); }
+  get principalKind(): Principal['kind'] { return this.state.principalKind ?? 'client'; }
+  get endedAt(): number | null { return this.state.endedAt; }
+  get userInputs(): number { return this.state.userInputs ?? 0; }
+
+  recordUserInput(now: number): void {
+    if (this.state.status !== 'active' || !this.isOpenAt(now)) return;
+    this.state = { ...this.state, userInputs: this.userInputs + 1 };
+    this.record({ type: 'UserInputRecorded', aggregateId: this.id, occurredAt: now, sequence: this.userInputs });
+  }
+
+  /** First millisecond at which this session is overdue. */
+  deadline(): number | undefined {
+    if (this.state.status === 'granted') return this.state.connectDeadline + 1;
+    if (this.state.status === 'active' && this.state.startedAt !== null) return this.state.startedAt + this.state.limits.maxDurationMs;
+    return undefined;
+  }
+
   get profileId(): ProfileId { return ProfileId.assume(this.state.profileId); }
   get status(): VoiceSessionStatus { return this.state.status; }
   get usage(): Usage { return this.state.usage; }
@@ -158,7 +158,8 @@ export class VoiceSession extends AggregateRoot<VoiceSessionEvent> {
    * A turn can start without the user (a late tool result, a model-initiated response), so a
    * confirmation is consumed only once the user has given input since it was asked.
    */
-  reviewToolCall(call: ToolCall, governance: ToolGovernance, now: number, userInputs: number): ToolDecision {
+  reviewToolCall(call: ToolCall, governance: ToolGovernance, now: number): ToolDecision {
+    const userInputs = this.userInputs;
     const cached = this.state.toolDecisions && Object.hasOwn(this.state.toolDecisions, call.id) ? this.state.toolDecisions[call.id] : undefined;
     if (cached && this.state.status === 'active' && this.isOpenAt(now)) {
       if (cached.fingerprint === fingerprint(call) && cached.turnId === call.turnId) return cached.decision;
@@ -201,19 +202,19 @@ export class VoiceSession extends AggregateRoot<VoiceSessionEvent> {
   }
 
   /** Counts the turn and ends the session if it used up its turns. Returns the end reason when it ended. */
-  completeTurn(turnId: TurnId, now: number, metrics: TurnMetrics = {}): EndReason | undefined {
-    if (this.state.status === 'ended' || (this.state.completedTurnIds ?? []).includes(turnId)) return undefined;
+  completeTurn(turnId: TurnId, now: number): EndReason | undefined {
+    if (!this.isOpenAt(now) || (this.state.completedTurnIds ?? []).includes(turnId)) return undefined;
     // A finished turn's calls are settled, so its review decisions can no longer be replayed.
     const toolDecisions = Object.fromEntries(Object.entries(this.state.toolDecisions ?? {}).filter(([, entry]) => entry.turnId !== turnId));
     this.state = { ...this.state, completedTurnIds: [...(this.state.completedTurnIds ?? []), turnId].slice(-REMEMBERED_TURNS), toolDecisions };
     const toolCalls = Usage.callsSoFar(this.state.usage, turnId);
     this.state = { ...this.state, usage: Usage.withCompletedTurn(this.state.usage) };
-    this.record({ ...metrics, type: 'TurnCompleted', aggregateId: this.state.id, occurredAt: now, turnId, toolCalls });
+    this.record({ type: 'TurnCompleted', aggregateId: this.state.id, occurredAt: now, turnId, toolCalls });
     if (this.state.usage.turns >= this.state.limits.maxTurns) {
       this.end('limit-turns', now);
       return 'limit-turns';
     }
-    return this.expireIfOverdue(now);
+    return undefined;
   }
 
   /** Ends the session if a deadline has passed. Returns the reason when it ended. */
@@ -235,9 +236,8 @@ export class VoiceSession extends AggregateRoot<VoiceSessionEvent> {
   }
 
   private overdueReason(now: number): EndReason | undefined {
-    const { status, connectDeadline, startedAt, limits } = this.state;
-    if (status === 'granted' && now > connectDeadline) return 'expired';
-    if (status === 'active' && startedAt !== null && now - startedAt >= limits.maxDurationMs) return 'limit-duration';
+    const deadline = this.deadline();
+    if (deadline !== undefined && now >= deadline) return this.state.status === 'granted' ? 'expired' : 'limit-duration';
     return undefined;
   }
 

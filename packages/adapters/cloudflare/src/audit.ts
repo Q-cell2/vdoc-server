@@ -22,6 +22,7 @@ const METADATA: Readonly<Record<string, readonly string[]>> = {
   VoiceSessionGrantRenewed: [],
   VoiceSessionQuotaRejected: ['code', 'quotaKind'],
   VoiceSessionConnected: ['reconnect'],
+  UserInputRecorded: ['sequence'],
   ToolCallReviewed: ['callId', 'tool', 'turnId', 'risk', 'decision', 'code'],
   ToolCallCompleted: ['callId', 'tool', 'turnId', 'ok', 'code'],
   TurnCompleted: ['turnId', 'toolCalls', 'modelToolCalls', 'timeToFirstAudioMs', 'timeToFirstToolCallMs', 'interruptLatencyMs'],

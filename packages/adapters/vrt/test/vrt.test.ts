@@ -95,6 +95,6 @@ describe('toSessionConfig', () => {
     expect(toSessionConfig({ model: { provider: 'boson' }, instructions: 'i', voice: 'default', turnDetection: 'semantic', language: 'zh-CN', vocabulary: ['vdoc'] }))
       .toEqual({ instructions: 'i', turnDetection: 'semantic', voice: 'default', inputTranscription: { language: 'zh', vocabulary: ['vdoc'] } });
     expect(toSessionConfig({ model: { provider: 'fake' }, instructions: 'i', voice: undefined, turnDetection: 'server', language: 'en', vocabulary: [] }))
-      .toEqual({ instructions: 'i', turnDetection: 'server', inputTranscription: { language: 'en' } });
+      .toEqual({ instructions: 'i', turnDetection: 'server', inputTranscription: { language: 'en', vocabulary: [] } });
   });
 });

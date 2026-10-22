@@ -1,3 +1,4 @@
+import type { ToolCall, ToolGovernance } from '../src';
 import { describe, expect, it } from 'vitest';
 import { ToolCallId, TurnId, VoiceSession } from '../src';
 import { activeSession, governance, grantedSession, principal } from './fixtures';
@@ -76,7 +77,7 @@ describe('VoiceSession lifecycle', () => {
       const turnId = TurnId.assume(`turn-${turn}-${'x'.repeat(32)}`);
       for (let index = 0; index < 12; index++) {
         const call = { id: ToolCallId.assume(`call-${turn}-${index}-${'y'.repeat(32)}`), name: 'read_document', arguments: {}, turnId };
-        session.reviewToolCall(call, governance(), now++, turn);
+        review(session, call, governance(), now++, turn);
         session.recordToolResult(call, { ok: true }, now++);
       }
       session.completeTurn(turnId, now++);
@@ -90,7 +91,7 @@ describe('VoiceSession lifecycle', () => {
     const session = activeSession();
     const turnId = TurnId.assume('t1');
     const call = { id: ToolCallId.assume('c1'), name: 'read_document', arguments: {}, turnId };
-    session.reviewToolCall(call, governance(), 2, 0);
+    review(session, call, governance(), 2, 0);
     session.recordToolResult(call, { ok: true }, 3);
     session.completeTurn(turnId, 4);
     expect(session.toSnapshot().toolDecisions ?? {}).toEqual({});
@@ -101,3 +102,8 @@ describe('VoiceSession lifecycle', () => {
   });
 
 });
+
+function review(session: VoiceSession, call: ToolCall, governance: ToolGovernance, now: number, inputs: number) {
+  while (session.userInputs < inputs) session.recordUserInput(now);
+  return session.reviewToolCall(call, governance, now);
+}

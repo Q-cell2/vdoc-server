@@ -1,16 +1,16 @@
 import { HttpApi } from '@vdoc-server/adapter-http';
 import { InMemoryAgentProfileRepository, InMemoryPrincipalQuotaStore } from '@vdoc-server/adapter-memory';
 import { ApiKeyAuthenticator, HmacGrantSigner, TrustedUserAuthenticator } from '@vdoc-server/adapter-security';
-import { AuditLogPublisher, CompositeEventPublisher, JsonLogger, RandomIdGenerator, TurnMetricsPublisher, systemClock } from '@vdoc-server/adapter-system';
+import { AuditLogPublisher, CompositeEventPublisher, JsonLogger, RandomIdGenerator, TurnMetricsPublisher, RealtimeConnectionEvents, systemClock } from '@vdoc-server/adapter-system';
 import { RealtimeHost, type ModelRegistry, type Scheduler } from '@vdoc-server/adapter-vrt';
-import { createApplication, type Application, type Clock, type CommandRunner, type EventPublisher, type PrincipalQuotaStore } from '@vdoc-server/application';
+import { createApplication, type Application, type Clock, type CommandRunner, type EventPublisher, type PrincipalQuotaStore, type SessionRepository } from '@vdoc-server/application';
 import { editingAssistantProfile, type ServerConfig } from '@vdoc-server/config';
-import { DocumentSessionPolicy, ProfileId, RiskAssessor, defaultToolPolicy, type VoiceSessionRepository } from '@vdoc-server/domain';
+import { DocumentSessionPolicy, ProfileId, RiskAssessor, defaultToolPolicy } from '@vdoc-server/domain';
 
 /** What differs between runtimes; everything else is built here once. */
 export interface ServerParts {
   readonly config: ServerConfig;
-  readonly sessions: VoiceSessionRepository;
+  readonly sessions: SessionRepository;
   readonly quotas?: PrincipalQuotaStore;
   readonly runCommand?: CommandRunner;
   readonly models: ModelRegistry;
@@ -19,6 +19,7 @@ export interface ServerParts {
   readonly scheduler?: Scheduler;
   /** Extra event subscribers (metrics, queues); the audit log is always on. */
   readonly subscribers?: readonly EventPublisher[];
+  readonly telemetrySubscribers?: readonly EventPublisher[];
   readonly realtime?: { resumeWindowMs?: number; heartbeatTimeoutMs?: number; clientToolTimeoutMs?: number };
 }
 
@@ -43,18 +44,7 @@ export async function createServer(parts: ServerParts): Promise<Server> {
   const profiles = new InMemoryAgentProfileRepository([profile], ProfileId.assume(profile.id));
   const [signer, applications] = await Promise.all([HmacGrantSigner.create(config.signingKeys), ApiKeyAuthenticator.create(config.clients)]);
 
-  let application: Application | undefined;
-  const realtime = new RealtimeHost({
-    handlers: () => {
-      if (!application) throw new Error('The application is not ready yet.');
-      return application;
-    },
-    models: parts.models,
-    logger,
-    ...(parts.scheduler ? { scheduler: parts.scheduler } : {}),
-    ...parts.realtime,
-  });
-
+  const connections = new RealtimeConnectionEvents();
   // Workers provide a per-document runner. Node serializes this process's commands,
   // including fire-and-forget SDK callbacks, so read/modify/save cannot lose usage.
   let commandTail: Promise<unknown> = Promise.resolve();
@@ -63,7 +53,7 @@ export async function createServer(parts: ServerParts): Promise<Server> {
     commandTail = next.catch(() => undefined);
     return next;
   });
-  application = createApplication({
+  const application = createApplication({
     sessions: parts.sessions,
     quotas: parts.quotas ?? new InMemoryPrincipalQuotaStore(config.quotas, () => (parts.clock ?? systemClock).now()),
     runCommand,
@@ -73,11 +63,18 @@ export async function createServer(parts: ServerParts): Promise<Server> {
     clock: parts.clock ?? systemClock,
     ids: new RandomIdGenerator(),
     events: new CompositeEventPublisher([new AuditLogPublisher(logger), new TurnMetricsPublisher(logger), ...(parts.subscribers ?? [])]),
-    connections: realtime,
+    connections,
     admission: new DocumentSessionPolicy(config.concurrency),
     toolPolicy: defaultToolPolicy(),
     riskAssessor: new RiskAssessor(),
   });
+
+  const realtime = new RealtimeHost({
+    handlers: application, models: parts.models, logger,
+    telemetry: new CompositeEventPublisher([new TurnMetricsPublisher(logger), ...(parts.telemetrySubscribers ?? [])]),
+    ...(parts.scheduler ? { scheduler: parts.scheduler } : {}), ...parts.realtime,
+  });
+  connections.subscribe((id, reason) => realtime.close(id, reason));
 
   const http = new HttpApi({ app: application, allowedOrigins: config.allowedOrigins, logger });
   return { application, http, realtime, logger };

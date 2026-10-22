@@ -1,4 +1,5 @@
 import { domainError, err, ok, type DomainError, type Result } from '../shared';
+import type { Principal } from '../access/principal';
 import type { VoiceSession } from './voice-session';
 
 /** What happens when a document already has a live voice session (another tab, another device). */
@@ -9,7 +10,10 @@ export class DocumentSessionPolicy {
   constructor(private readonly strategy: ConcurrencyStrategy = 'supersede', private readonly maxOpen = 1) {}
 
   /** Returns the open sessions that must end to admit a new one. */
-  admit(open: readonly VoiceSession[]): Result<readonly VoiceSession[], DomainError<'DOCUMENT_BUSY'>> {
+  admit(open: readonly VoiceSession[], principal: Principal): Result<readonly VoiceSession[], DomainError<'DOCUMENT_BUSY'>> {
+    if (open.some((session) => !session.isOwnedBy(principal.id) && (principal.kind === 'user' || session.principalKind === 'user'))) {
+      return err(domainError('DOCUMENT_BUSY', 'This document has a session owned by another principal.'));
+    }
     if (open.length < this.maxOpen) return ok([]);
     if (this.strategy === 'reject') return err(domainError('DOCUMENT_BUSY', 'This document already has an active voice session.'));
     return ok(open.slice(0, open.length - this.maxOpen + 1));
