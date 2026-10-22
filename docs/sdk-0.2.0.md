@@ -1,5 +1,7 @@
 # vRealTime 0.2.0 integration
 
+> Historical report: cross-document principal quotas and usage settlement have since been removed. Quota rejection/lease tests and billing-delta acceptance items below describe the earlier implementation, not the current contract. Current behavior is documented in TRUSTED_USER_IDENTITY.md and AUDIT.md.
+
 The realtime adapter and both runtime test clients use the published 0.2.0 packages. Keep `@vrealtime/server`, `core`, `boson`, `openai`, `openai-compatible`, `protocol`, `testing`, and `client` on the same release. Application workspace packages retain their existing versions.
 
 ## Protocol and lifecycle

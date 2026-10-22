@@ -8,8 +8,6 @@ const STATUS: Record<AppErrorCode, number> = {
   INVALID_INPUT: 400,
   DOCUMENT_BUSY: 409,
   SESSION_CLOSED: 410,
-  QUOTA_EXCEEDED: 429,
-  QUOTA_UNAVAILABLE: 503,
 };
 
 export const statusOf = (code: AppErrorCode): number => STATUS[code];
@@ -38,8 +36,7 @@ export function fromAppError(error: AppError): Response {
   const status = statusOf(error.code);
   return problem(status, error.code, error.message, {
     ...(status === 401 ? { 'www-authenticate': 'Bearer' } : {}),
-    ...(error.retryAfterSeconds !== undefined ? { 'retry-after': String(error.retryAfterSeconds) } : {}),
-  }, { ...(error.quotaKind ? { quotaKind: error.quotaKind } : {}), ...(error.retryAfterSeconds !== undefined ? { retryAfterSeconds: error.retryAfterSeconds } : {}) });
+  });
 }
 
 const TITLES: Record<number, string> = {

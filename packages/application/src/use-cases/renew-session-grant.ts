@@ -3,7 +3,6 @@ import { err, ok, type Result } from '@vdoc-server/domain';
 import { fromDomain, type AppError } from '../errors';
 import type { CallerAuthenticator, CallerCredentials, Clock, GrantSigner } from '../ports';
 import type { VoiceSessionStore } from '../voice-session-store';
-import type { SessionQuotaService } from '../session-quota-service';
 import { authenticateCaller } from './caller';
 import type { GrantView } from './views';
 
@@ -15,7 +14,7 @@ export interface RenewSessionGrantInput {
 
 /** Command: a fresh short-lived grant, e.g. before every reconnect. */
 export class RenewSessionGrant {
-  constructor(private readonly deps: { store: VoiceSessionStore; lifecycle: SessionLifecycle; quotas: SessionQuotaService; authenticator: CallerAuthenticator; signer: GrantSigner; clock: Clock }) {}
+  constructor(private readonly deps: { store: VoiceSessionStore; lifecycle: SessionLifecycle; authenticator: CallerAuthenticator; signer: GrantSigner; clock: Clock }) {}
 
   async execute(input: RenewSessionGrantInput): Promise<Result<GrantView, AppError>> {
     const { store, authenticator, signer, clock } = this.deps;
@@ -28,11 +27,9 @@ export class RenewSessionGrant {
     if (!grant.ok) {
       return err(fromDomain(grant.error));
     }
-    return this.deps.quotas.withReservation(session.value, { requestId: input.credentials.requestId }, async () => {
-      const token = await signer.sign(grant.value);
-      session.value.recordGrantRenewal(now);
-      const committed = await this.deps.lifecycle.persistAndDispatch(session.value, input.credentials.requestId);
-      return committed.ok ? ok({ token, expiresAt: grant.value.expiresAt }) : committed;
-    });
+    const token = await signer.sign(grant.value);
+    session.value.recordGrantRenewal(now);
+    const committed = await this.deps.lifecycle.persistAndDispatch(session.value, input.credentials.requestId);
+    return committed.ok ? ok({ token, expiresAt: grant.value.expiresAt }) : committed;
   }
 }

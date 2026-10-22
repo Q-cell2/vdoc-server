@@ -108,4 +108,3 @@ export class DurableObjectVoiceSessionRepository implements SessionRepository {
     }
   }
 }
-export { DurablePrincipalQuotaStore, PrincipalQuotaBinding } from './principal-quota';

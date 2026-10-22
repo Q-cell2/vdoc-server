@@ -7,16 +7,12 @@ export type AppErrorCode =
   | 'INVALID_INPUT'
   | 'GRANT_INVALID'
   | 'SESSION_CLOSED'
-  | 'DOCUMENT_BUSY'
-  | 'QUOTA_EXCEEDED'
-  | 'QUOTA_UNAVAILABLE';
+  | 'DOCUMENT_BUSY';
 
 /** Failure a use case reports to its caller. Edges map `code` to HTTP statuses or close codes. */
 export interface AppError {
   readonly code: AppErrorCode;
   readonly message: string;
-  readonly retryAfterSeconds?: number;
-  readonly quotaKind?: 'concurrency' | 'rate';
 }
 
 export const appError = (code: AppErrorCode, message: string): AppError => ({ code, message });
@@ -29,7 +25,6 @@ const FROM_DOMAIN: Record<string, AppErrorCode> = {
   GRANT_SCOPE_MISMATCH: 'GRANT_INVALID',
   SESSION_CLOSED: 'SESSION_CLOSED',
   DOCUMENT_BUSY: 'DOCUMENT_BUSY',
-  QUOTA_EXCEEDED: 'QUOTA_EXCEEDED',
 };
 
 /** Anti-corruption at the layer boundary: callers never see domain codes they cannot map. */

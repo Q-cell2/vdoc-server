@@ -14,8 +14,9 @@ it('keeps root command discovery equivalent to the explicit Worker configuration
   expect(root).toEqual(normalized('apps/worker/wrangler.jsonc'));
   expect(root.previews.durable_objects.bindings).toEqual([
     { name: 'VOICE_ROOMS', class_name: 'DocumentVoiceRoom' },
-    { name: 'PRINCIPAL_QUOTAS', class_name: 'PrincipalQuotaRoom' },
   ]);
+  expect(root.durable_objects.bindings).toEqual(root.previews.durable_objects.bindings);
+  expect(root.migrations.at(-1)).toEqual({ tag: 'v3', deleted_classes: ['PrincipalQuotaRoom'] });
   expect(root.previews.vars.VDOC_SERVER_ENV).toBe('production');
   expect(root.observability).toEqual({ logs: { enabled: true, invocation_logs: true } });
 });

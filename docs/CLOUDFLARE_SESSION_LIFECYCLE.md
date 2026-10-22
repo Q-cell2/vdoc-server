@@ -8,9 +8,8 @@
 
 - 保留现有 `DocumentVoiceRoom` 类、`VOICE_ROOMS` 绑定和 `v1` SQLite migration。
   不需要删除/重建 Durable Objects，也不需要增加 Postgres 连接。
-- `v2` migration 增加按 principal 隔离的 `PrincipalQuotaRoom` 和 `PRINCIPAL_QUOTAS`
-  绑定，负责跨文档配额。结束提交释放名额；租约和频率窗口可独立通过 alarm 清理，
-  见 [跨文档配额](PRINCIPAL_QUOTAS.md)。
+- 保留历史 `v2` migration，新增 `v3` 删除旧 `PrincipalQuotaRoom`，移除配额绑定。
+  部署该迁移会永久删除旧配额数据，文档房间和审计数据保留。
 - 沿用 `voice-session:` 键，值升级为应用层 envelope：`{ session, identity, outbox,
   nextSequence, delivered, nextWakeAt }`。领域快照只包含业务状态，包括输入序号与待确认
   操作；审计身份和各订阅者投递确认单独保存。旧平铺快照读取时迁移，保留事件 ID、
@@ -26,8 +25,8 @@
 
 过期采用调度器方案（#36）：只有 `ExpireVoiceSession` 真正提交过期状态，它由
 `SessionMaintenance` 调用。所有业务入口统一用 `isOpenAt(now)` 拒绝过期会话；查询
-只推导视图，既不写库也不释放配额。新建准入忽略已经过期的会话，不顺带清扫。
-聚合的 `deadline()` 是租约和调度截止时间的唯一业务规则来源。
+只推导视图，不写库。新建准入忽略已经过期的会话，不顺带清扫。
+聚合的 `deadline()` 是调度截止时间的唯一业务规则来源。
 
 Worker `alarm()` 只执行 `sessionMaintenance.execute()`；Node 启动 HTTP 服务时每秒
 执行同一服务，关闭时停止定时器。两者都在业务命令所用的串行队列内执行。服务依次

@@ -14,12 +14,10 @@ export { GetRealtimeSessionDescriptor, type RealtimeSessionDescriptor } from './
 export { ReviewToolCall, type ToolCallInput } from './use-cases/review-tool-call';
 export type { GrantView, VoiceSessionView } from './use-cases/views';
 export { VoiceSessionStore } from './voice-session-store';
-export { SessionQuotaService, quotaUnavailable, type VoiceSessionQuotaRejected } from './session-quota-service';
 export { SessionMaintenance, ExpireVoiceSession } from './session-maintenance';
-export { RelaySessionOutbox, QuotaEventHandler, DisconnectEventHandler, UsageSettlementPublisher } from './session-events';
+export { RelaySessionOutbox, DisconnectEventHandler } from './session-events';
 export { SessionLifecycle } from './session-lifecycle';
 export { RecordUserInput } from './use-cases/record-user-input';
 export { HandleRealtimeDisconnect } from './use-cases/handle-realtime-disconnect';
 export { migrateSessionRecord, nextSessionWake, type SessionRecord, type SessionRepository, type SessionRecordStorage, type SessionMaintenanceStorage, type SessionPersistence, type SessionEvent, type AuditIdentity } from './session-record';
 export { parseTurnMetrics, type TurnMetrics } from './telemetry/turn-metrics';
-export type { PrincipalQuotaStore } from './ports';

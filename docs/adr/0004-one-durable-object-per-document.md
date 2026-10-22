@@ -14,5 +14,4 @@ Worker 把 `/v1/documents/{documentId}/…` 下的所有请求转发给 `idFromN
 
 - 同一文档的完整应用命令通过串行队列执行，覆盖签名、鉴权等外部 await。
 - 断线重连落到同一个对象，可以续传。
-- 跨文档的并发和每小时创建次数由另一个按 principal ID 路由的 `PrincipalQuotaRoom` 原子维护，
-  见 [跨文档配额](../PRINCIPAL_QUOTAS.md)。
+- 不维护跨文档配额；单次会话限制与同文档并发策略由领域规则负责。

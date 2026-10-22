@@ -92,21 +92,36 @@ describe('SQLite audit publisher', () => {
       expect(sink.list('vs_a').events.map((row) => row.event.type)).toEqual(['VoiceSessionEnded']);
     } finally { storage.db.close(); }
   });
-  it('retains trusted attribution and deduplicates settlement retries atomically across reconstruction', async () => {
+  it('retains trusted attribution and deduplicates event retries atomically across reconstruction', async () => {
     const storage = new SqliteStorage();
     try {
-      const row = event('TurnCompleted', { requestId: 'request-1', clientId: 'app', userId: 'user-A', principalId: 'usr_abc', documentId: 'doc', settlementId: 'vs_a:turn:one', usageUnit: 'turn', usageDelta: 1 });
+      const row = event('TurnCompleted', { requestId: 'request-1', clientId: 'app', userId: 'user-A', principalId: 'usr_abc', documentId: 'doc', eventId: 'vs_a:event:1' });
       const sink = new DurableObjectAuditPublisher(storage);
       await sink.publish([row, row]);
       const restored = new DurableObjectAuditPublisher(storage);
       await restored.publish([row]);
       expect(restored.list('vs_a').events).toHaveLength(1);
       expect(restored.list('vs_a').events[0]?.event).toMatchObject(row);
-      storage.failOn = 'vs_a:turn:two';
-      await expect(restored.publish([event('TurnCompleted', { settlementId: 'vs_a:turn:two' })])).rejects.toThrow();
+      storage.failOn = 'vs_a:event:2';
+      await expect(restored.publish([event('TurnCompleted', { eventId: 'vs_a:event:2' })])).rejects.toThrow();
       storage.failOn = '';
-      await restored.publish([event('TurnCompleted', { settlementId: 'vs_a:turn:two' })]);
+      await restored.publish([event('TurnCompleted', { eventId: 'vs_a:event:2' })]);
       expect(restored.list('vs_a').events).toHaveLength(2);
+    } finally { storage.db.close(); }
+  });
+
+  it('migrates legacy deduplication to event IDs without replaying retained audit rows', async () => {
+    const storage = new SqliteStorage();
+    try {
+      const original = new DurableObjectAuditPublisher(storage);
+      const row = event('TurnCompleted', { eventId: 'vs_a:event:5', turnId: 'old-turn' });
+      storage.db.exec('DROP TABLE voice_audit_deliveries; CREATE TABLE voice_audit_settlements (id TEXT PRIMARY KEY, recorded_at INTEGER NOT NULL)');
+      storage.sql.exec('INSERT INTO voice_audit_events(session_id, recorded_at, payload) VALUES (?, ?, ?)', 'vs_a', Date.now(), JSON.stringify({ ...row, settlementId: 'vs_a:turn:old-turn' }));
+      const restored = new DurableObjectAuditPublisher(storage);
+      await restored.publish([row]);
+      expect(original.list('vs_a').events).toHaveLength(1);
+      expect(storage.sql.exec("SELECT name FROM sqlite_master WHERE name = 'voice_audit_settlements'")).toEqual([]);
+      expect(storage.sql.exec("SELECT id FROM voice_audit_deliveries WHERE id = 'vs_a:event:5'")).toHaveLength(1);
     } finally { storage.db.close(); }
   });
 

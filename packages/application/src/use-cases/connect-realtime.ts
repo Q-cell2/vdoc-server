@@ -3,7 +3,6 @@ import { DocumentId, VoiceSessionId, err, ok, type Result } from '@vdoc-server/d
 import { appError, fromDomain, type AppError } from '../errors';
 import type { Clock, GrantSigner } from '../ports';
 import type { VoiceSessionStore } from '../voice-session-store';
-import type { SessionQuotaService } from '../session-quota-service';
 
 export interface ConnectRealtimeInput {
   /** `hello.auth` from the realtime client. */
@@ -23,7 +22,7 @@ export interface RealtimeIdentity {
 
 /** Command: a realtime connection (new or resumed) presents its grant. */
 export class ConnectRealtime {
-  constructor(private readonly deps: { store: VoiceSessionStore; lifecycle: SessionLifecycle; quotas: SessionQuotaService; signer: GrantSigner; clock: Clock }) {}
+  constructor(private readonly deps: { store: VoiceSessionStore; lifecycle: SessionLifecycle; signer: GrantSigner; clock: Clock }) {}
 
   async execute(input: ConnectRealtimeInput): Promise<Result<RealtimeIdentity, AppError>> {
     const { store, signer, clock } = this.deps;
@@ -42,9 +41,7 @@ export class ConnectRealtime {
     if (!connected.ok) {
       return err(fromDomain(connected.error));
     }
-    return this.deps.quotas.withReservation(session, {}, async () => {
-      const committed = await this.deps.lifecycle.persistAndDispatch(session);
-      return committed.ok ? ok({ sessionId: session.id, documentId: session.documentId, principalId: session.principalId, profileId: session.profileId }) : committed;
-    });
+    const committed = await this.deps.lifecycle.persistAndDispatch(session);
+    return committed.ok ? ok({ sessionId: session.id, documentId: session.documentId, principalId: session.principalId, profileId: session.profileId }) : committed;
   }
 }

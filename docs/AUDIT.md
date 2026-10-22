@@ -17,19 +17,20 @@ const page = await room.auditEvents(sessionId, 0, 100);
 
 默认保留 30 天，从写入时间计算；每次写入或查询清理过期记录。没有新访问时清理不会主动唤醒房间，因此物理删除可以延迟。这个保留窗口独立于会话快照的 7 天窗口。
 
-应用层 `VoiceSessionStore.commit` 只原子保存快照和带身份的 outbox，不操作配额、
-实时连接或计量。命令显式调用 `SessionLifecycle.persistAndDispatch`，保存后由
-`RelaySessionOutbox` 调用独立的 `QuotaEventHandler`、`DisconnectEventHandler` 与
-发布端口。`UsageSettlementPublisher` 单独投影稳定的 turn/call 结算 ID，领域事件与
-outbox 不包含计量口径字段。
+应用层 `VoiceSessionStore.commit` 只原子保存快照和带身份的 outbox，不操作
+实时连接。命令显式调用 `SessionLifecycle.persistAndDispatch`，保存后由
+`RelaySessionOutbox` 调用独立的 `DisconnectEventHandler` 与发布端口。
+轮次和工具结果直接作为业务审计事件发布，不再生成结算 ID、usageUnit 或 usageDelta。
 
 每个订阅者有稳定名称和持久化的事件确认记录。某个订阅者失败不阻止其他订阅者
 执行；重启后只重试未确认的投递。副作用成功而确认写入失败时仍可能重投，接收方
-必须按稳定 `eventId` / `settlementId` 幂等。SQLite 审计 sink 按事件 ID 去重；不承诺
+必须按稳定 `eventId` 幂等。SQLite 审计 sink 按事件 ID 去重；不承诺
 跨系统 exactly-once。仅所有订阅者均确认后清空 outbox，维护服务自动重投，待投递
 记录不会被会话保留清理删除。Node 可通过 `createServer({ subscribers })` 注入持久
 sink，但默认会话和 outbox 仍是进程内存。
 
-配额拒绝时尚无已提交的会话；正式应用事件 `VoiceSessionQuotaRejected` 明确采用
-尽力投递，不写会话 outbox，也不占用创建次数。指标测量使用独立 telemetry 端口，
-不作为持久业务审计的一部分。
+指标测量使用独立 telemetry 端口，不作为持久业务审计的一部分。
+
+SQLite 初始化时将旧 `voice_audit_settlements` 的去重用途迁移为
+`voice_audit_deliveries`，从保留的审计行恢复 eventId，再删除旧索引表。
+历史审计正文保持不变，新事件不包含结算字段。

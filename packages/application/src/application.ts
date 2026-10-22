@@ -1,12 +1,11 @@
 import type { SessionRepository } from './session-record';
-import { SessionQuotaService } from './session-quota-service';
-import { RelaySessionOutbox, QuotaEventHandler, DisconnectEventHandler, UsageSettlementPublisher } from './session-events';
+import { RelaySessionOutbox, DisconnectEventHandler } from './session-events';
 import { SessionLifecycle } from './session-lifecycle';
 import { ExpireVoiceSession, SessionMaintenance } from './session-maintenance';
 import { RecordUserInput } from './use-cases/record-user-input';
 import { HandleRealtimeDisconnect } from './use-cases/handle-realtime-disconnect';
 import type { AgentProfileRepository, DocumentSessionPolicy, RiskAssessor, ToolPolicy } from '@vdoc-server/domain';
-import type { CallerAuthenticator, Clock, EventPublisher, GrantSigner, IdGenerator, PrincipalQuotaStore, RealtimeConnections } from './ports';
+import type { CallerAuthenticator, Clock, EventPublisher, GrantSigner, IdGenerator, RealtimeConnections } from './ports';
 import { ConnectRealtime } from './use-cases/connect-realtime';
 import { CompleteTurn } from './use-cases/complete-turn';
 import { ConfigureRealtimeSession } from './use-cases/configure-realtime-session';
@@ -26,7 +25,6 @@ export interface ApplicationDependencies {
   /** Runtime scope decides which commands must run sequentially (one document on Workers). */
   readonly runCommand?: CommandRunner;
   readonly sessions: SessionRepository;
-  readonly quotas: PrincipalQuotaStore;
   readonly profiles: AgentProfileRepository;
   readonly authenticator: CallerAuthenticator;
   readonly signer: GrantSigner;
@@ -61,8 +59,7 @@ export interface Application {
 /** Factory: wires use cases to their ports. Composition roots call this once. */
 export function createApplication(deps: ApplicationDependencies): Application {
   const store = new VoiceSessionStore(deps.sessions, deps.clock);
-  const quotas = new SessionQuotaService(deps.quotas, deps.sessions, deps.events, deps.clock);
-  const relay = new RelaySessionOutbox(deps.sessions, [new QuotaEventHandler(quotas), new DisconnectEventHandler(deps.connections)], new UsageSettlementPublisher(deps.events), deps.clock);
+  const relay = new RelaySessionOutbox(deps.sessions, [new DisconnectEventHandler(deps.connections)], deps.events, deps.clock);
   const lifecycle = new SessionLifecycle(store, relay);
   const expire = new ExpireVoiceSession(store, lifecycle, deps.clock);
   const { profiles, authenticator, signer, clock, ids, admission } = deps;
@@ -72,12 +69,12 @@ export function createApplication(deps: ApplicationDependencies): Application {
     expireVoiceSession: expire,
     relaySessionOutbox: relay,
     sessionMaintenance: new SessionMaintenance(deps.sessions, expire, relay, clock),
-    grantVoiceSession: new GrantVoiceSession({ store, lifecycle, quotas, profiles, authenticator, signer, clock, ids, admission }),
-    renewSessionGrant: new RenewSessionGrant({ store, lifecycle, quotas, authenticator, signer, clock }),
+    grantVoiceSession: new GrantVoiceSession({ store, lifecycle, profiles, authenticator, signer, clock, ids, admission }),
+    renewSessionGrant: new RenewSessionGrant({ store, lifecycle, authenticator, signer, clock }),
     getVoiceSession: new GetVoiceSession({ store, authenticator, clock }),
     endVoiceSession: new EndVoiceSession({ store, lifecycle, authenticator, clock }),
     getRealtimeSessionDescriptor: new GetRealtimeSessionDescriptor({ store, profiles, clock }),
-    connectRealtime: new ConnectRealtime({ store, lifecycle, quotas, signer, clock }),
+    connectRealtime: new ConnectRealtime({ store, lifecycle, signer, clock }),
     configureRealtimeSession: new ConfigureRealtimeSession({ store, profiles, clock }),
     reviewToolCall: new ReviewToolCall({ store, lifecycle, profiles, policy: deps.toolPolicy, assessor: deps.riskAssessor, clock }),
     recordToolResult: new RecordToolResult({ store, lifecycle, clock }),

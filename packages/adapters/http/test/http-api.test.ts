@@ -45,13 +45,6 @@ describe('HttpApi', () => {
     expect(app.grantVoiceSession.execute).not.toHaveBeenCalled();
   });
 
-  it('titles quota-unavailable problems', async () => {
-    const { http } = api({ getVoiceSession: { execute: vi.fn(async () => ({ ok: false, error: { code: 'QUOTA_UNAVAILABLE', message: 'Try again.', retryAfterSeconds: 1 } })) } });
-    const response = await http.handle(request('GET', '/v1/documents/d/voice-sessions/vs_1'));
-    expect(response.status).toBe(503);
-    expect(await response.json()).toMatchObject({ title: 'Service Unavailable', code: 'QUOTA_UNAVAILABLE' });
-  });
-
   it('maps application errors to problem+json with stable codes', async () => {
     const { http } = api();
     const missing = await http.handle(request('GET', '/v1/documents/d/voice-sessions/vs_1'));
