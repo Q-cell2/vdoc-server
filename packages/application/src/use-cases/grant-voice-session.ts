@@ -3,7 +3,6 @@ import { DocumentId, ProfileId, VoiceSession, VoiceSessionId, err, ok, type Agen
 import { appError, fromDomain, type AppError } from '../errors';
 import type { CallerAuthenticator, CallerCredentials, Clock, GrantSigner, IdGenerator } from '../ports';
 import type { VoiceSessionStore } from '../voice-session-store';
-import type { SessionQuotaService } from '../session-quota-service';
 import { authenticateCaller } from './caller';
 import { toView, type GrantView, type VoiceSessionView } from './views';
 
@@ -21,7 +20,7 @@ export interface GrantVoiceSessionOutput {
 /** Command: a client wants to start talking about a document. */
 export class GrantVoiceSession {
   constructor(private readonly deps: {
-    store: VoiceSessionStore; lifecycle: SessionLifecycle; quotas: SessionQuotaService; profiles: AgentProfileRepository; authenticator: CallerAuthenticator;
+    store: VoiceSessionStore; lifecycle: SessionLifecycle; profiles: AgentProfileRepository; authenticator: CallerAuthenticator;
     signer: GrantSigner; clock: Clock; ids: IdGenerator; admission: DocumentSessionPolicy;
   }) {}
 
@@ -52,16 +51,14 @@ export class GrantVoiceSession {
       ...(principal.value.userId ? { userId: principal.value.userId } : {}),
       ...(input.credentials.requestId ? { requestId: input.credentials.requestId } : {}),
     };
-    return this.deps.quotas.withReservation(session, { supersedes: admitted.value, identity, requestId: input.credentials.requestId }, async () => {
-      const token = await signer.sign(grant.value);
-      for (const superseded of admitted.value) {
-        superseded.end('superseded', now);
-        const ended = await this.deps.lifecycle.persistAndDispatch(superseded, input.credentials.requestId);
-        if (!ended.ok) return ended;
-      }
-      const committed = await this.deps.lifecycle.persistAndDispatch(session, input.credentials.requestId, identity);
-      if (!committed.ok) return committed;
-      return ok({ session: toView(session, now), grant: { token, expiresAt: grant.value.expiresAt } });
-    });
+    const token = await signer.sign(grant.value);
+    for (const superseded of admitted.value) {
+      superseded.end('superseded', now);
+      const ended = await this.deps.lifecycle.persistAndDispatch(superseded, input.credentials.requestId);
+      if (!ended.ok) return ended;
+    }
+    const committed = await this.deps.lifecycle.persistAndDispatch(session, input.credentials.requestId, identity);
+    if (!committed.ok) return committed;
+    return ok({ session: toView(session, now), grant: { token, expiresAt: grant.value.expiresAt } });
   }
 }

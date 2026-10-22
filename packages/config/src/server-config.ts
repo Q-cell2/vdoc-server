@@ -1,4 +1,4 @@
-import { PrincipalQuota, SessionLimits, type ConcurrencyStrategy, type ModelChoice, type PrincipalQuotaLimits } from '@vdoc-server/domain';
+import { SessionLimits, type ConcurrencyStrategy, type ModelChoice } from '@vdoc-server/domain';
 
 export type Environment = 'development' | 'test' | 'production';
 
@@ -16,7 +16,6 @@ export interface ServerConfig {
   readonly providerKeys: { readonly boson?: string; readonly openai?: string; readonly anthropic?: string };
   readonly concurrency: ConcurrencyStrategy;
   readonly limits: SessionLimits;
-  readonly quotas: PrincipalQuotaLimits;
   /** Development-only defaults that were filled in (logged at startup). */
   readonly generated: readonly string[];
 }
@@ -93,7 +92,6 @@ export function loadConfig(env: Env): { ok: true; value: ServerConfig } | { ok: 
   if (!limits.ok) errors.push(limits.error.message);
 
   const logLevel = env.VDOC_SERVER_LOG_LEVEL ?? 'info';
-  const quotas = parsePrincipalQuotaLimits(env, errors);
   if (!['debug', 'info', 'warn', 'error'].includes(logLevel)) errors.push('VDOC_SERVER_LOG_LEVEL must be debug, info, warn or error.');
 
   if (errors.length > 0 || !limits.ok) return { ok: false, errors: [...new Set(errors)] };
@@ -101,17 +99,9 @@ export function loadConfig(env: Env): { ok: true; value: ServerConfig } | { ok: 
     ok: true,
     value: {
       environment, allowClientOnly, logLevel: logLevel as ServerConfig['logLevel'], signingKeys, clients, allowedOrigins, model, providerKeys,
-      concurrency: concurrency as ConcurrencyStrategy, limits: limits.value, quotas, generated,
+      concurrency: concurrency as ConcurrencyStrategy, limits: limits.value, generated,
     },
   };
-}
-
-/** Also used by the principal DO, which does not create model/signing infrastructure. */
-export function parsePrincipalQuotaLimits(env: Env, errors: string[]): PrincipalQuotaLimits {
-  const maxConcurrentSessions = integer(env.VDOC_SERVER_MAX_CONCURRENT_SESSIONS_PER_PRINCIPAL, PrincipalQuota.defaults.maxConcurrentSessions, errors, 'VDOC_SERVER_MAX_CONCURRENT_SESSIONS_PER_PRINCIPAL');
-  const maxSessionsPerHour = integer(env.VDOC_SERVER_MAX_SESSIONS_PER_HOUR, PrincipalQuota.defaults.maxSessionsPerHour, errors, 'VDOC_SERVER_MAX_SESSIONS_PER_HOUR');
-  if (![maxConcurrentSessions, maxSessionsPerHour].every(Number.isSafeInteger)) errors.push('Principal quota limits must be safe integers.');
-  return { maxConcurrentSessions, maxSessionsPerHour };
 }
 
 function parseEnvironment(value: string | undefined, errors: string[]): Environment {

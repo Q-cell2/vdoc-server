@@ -59,10 +59,8 @@ const session = await connect(`wss://voice.example.com${created.realtimePath}`, 
 
 实时连接被拒绝时的关闭码：`4401` 授权无效，`4404` 会话不存在，`4410` 会话已结束。
 
-跨文档配额超限返回 `429`，`code` 为 `QUOTA_EXCEEDED`，`Retry-After` 是建议等待的秒数，
-浏览器可通过 CORS 读取此响应头。配额按鉴权后的 principal ID 计算：带 `X-Vdoc-User-Id` 的请求
-对应一个用户 principal（由 client ID 和用户 ID 派生），每个登录用户单独计数；只有在允许纯 client 鉴权时，
-不带用户头的请求才落到共享的 client principal。
+服务端按文档隔离会话与工具权限，保留单次会话时长、轮次和工具调用限制。
+不再维护跨文档并发配额、每小时创建额度或使用量结算。
 
 ## 配置
 
@@ -78,8 +76,6 @@ const session = await connect(`wss://voice.example.com${created.realtimePath}`, 
 | `VDOC_SERVER_MODEL` | `boson`、`openai`、`cascade-claude`、`fake`，可写成 `boson:<model>`。`cascade-claude` 是语音识别 + Claude + 语音合成，默认 `claude-opus-5-5`，可写成 `cascade-claude:<Claude 模型>` |
 | `BOSON_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | 模型密钥。`cascade-claude` 需要 `ANTHROPIC_API_KEY`（Claude）和 `OPENAI_API_KEY`（语音识别与合成） |
 | `VDOC_SERVER_CONCURRENCY` | 同一文档已有会话时：`supersede`（默认，顶替）或 `reject` |
-| `VDOC_SERVER_MAX_CONCURRENT_SESSIONS_PER_PRINCIPAL` | 同一 principal 跨所有文档最多未结束会话，默认 3（含已授权未连接的会话） |
-| `VDOC_SERVER_MAX_SESSIONS_PER_HOUR` | 同一 principal 在滚动一小时内最多创建的会话，默认 60；续签、重连不重复扣次 |
 | `VDOC_SERVER_GRANT_TTL_SECONDS` | 授权有效期，默认 60 |
 | `VDOC_SERVER_MAX_SESSION_MINUTES` | 会话最长时长，默认 30 |
 | `VDOC_SERVER_MAX_TURNS` | 最大轮次，默认 300 |
@@ -96,8 +92,8 @@ const session = await connect(`wss://voice.example.com${created.realtimePath}`, 
 同一文档的应用命令串行执行，避免并发授权和计数更新互相覆盖。
 Alarm 会结束未使用的过期授权及达到时长限制的会话，并在结束七天后清理快照，
 不需要等待下一次用户请求。详见 [会话存储与生命周期](docs/CLOUDFLARE_SESSION_LIFECYCLE.md)。
-每个 principal 另有一个 `PrincipalQuotaRoom`，原子维护跨文档配额；两个 Wrangler 配置都包含
-`PRINCIPAL_QUOTAS` 绑定和新增的 `v2` SQLite migration。见 [跨文档配额](docs/PRINCIPAL_QUOTAS.md)。
+两个 Wrangler 配置保留 `v1` / `v2` 历史迁移，并新增 `v3` 删除旧配额对象；
+当前仅绑定文档房间。部署 `v3` 会永久删除旧配额对象数据，不影响文档房间与审计记录。
 
 ```bash
 npx wrangler secret put VDOC_SERVER_SIGNING_KEYS --cwd apps/worker

@@ -105,15 +105,15 @@ for (const dir of packageDirs()) {
 }
 
 // These boundaries matter inside the layers as well: storing an aggregate must
-// never become an implicit quota, billing or connection command again.
+// never become an implicit event-publication or connection command.
 const sessionStore = readFileSync(join(root, 'packages/application/src/voice-session-store.ts'), 'utf8');
-if (/\b(?:PrincipalQuotaStore|SessionQuotaService|RealtimeConnections|settlementId|usageUnit)\b|\.(?:publish|close|reserve|release)\(/.test(sessionStore)) {
+if (/\b(?:RealtimeConnections)\b|\.(?:publish|close|reserve|release)\(/.test(sessionStore)) {
   problems.push('VoiceSessionStore must only load and persist session/outbox state');
 }
 for (const file of sourceFiles(join(root, 'packages/domain/src'))) {
   const source = readFileSync(file, 'utf8');
-  if (/\b(?:pendingAuditEvents|nextAuditSequence|stageAuditEvents|TurnMetrics|settlementId|usageUnit)\b/.test(source)) {
-    problems.push(`${relative(root, file)}: infrastructure delivery, telemetry and settlement state belongs outside the domain`);
+  if (/\b(?:pendingAuditEvents|nextAuditSequence|stageAuditEvents|TurnMetrics)\b/.test(source)) {
+    problems.push(`${relative(root, file)}: infrastructure delivery and telemetry state belongs outside the domain`);
   }
 }
 for (const file of sourceFiles(join(root, 'packages/application/src'))) {

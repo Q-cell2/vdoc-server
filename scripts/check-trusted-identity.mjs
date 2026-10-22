@@ -1,5 +1,5 @@
 /**
- * Reproduce the actual BFF -> Node HTTP identity/quota contract without secrets,
+ * Reproduce the actual BFF -> Node HTTP identity contract without secrets,
  * a database, a provider connection or deployment. Run from this repository:
  *
  * VDOC_APP_CHECKOUT=/absolute/path/to/vdoc node --import tsx scripts/check-trusted-identity.mjs
@@ -26,14 +26,12 @@ const key = 'bff-node-integration-client-key-not-production';
 const config = loadConfig({
   VDOC_SERVER_ENV: 'test', VDOC_SERVER_MODEL: 'fake', VDOC_SERVER_LOG_LEVEL: 'error',
   VDOC_SERVER_CLIENTS: `web:${key}`, VDOC_SERVER_ALLOW_CLIENT_ONLY: 'false',
-  VDOC_SERVER_MAX_CONCURRENT_SESSIONS_PER_PRINCIPAL: '1', VDOC_SERVER_MAX_SESSIONS_PER_HOUR: '3',
 });
 if (!config.ok) throw new Error(config.errors.join('; '));
 const sessions = new InMemoryVoiceSessionRepository();
 const events = new RecordingEventPublisher();
 const server = await createNodeServer(config.value, { sessions, subscribers: [events] });
 const node = await startNodeServer(server, { port: 0 });
-let unavailable;
 let upstreamRequests = 0;
 const requestIds = new Set();
 
@@ -69,12 +67,8 @@ try {
   assert.equal((await sessions.get(VoiceSessionId.assume(alice.sessionId))).principalId, principal);
 
   response = await run('create', 'alice', 'doc-b');
-  assert.equal(response.status, 429);
-  const quota = await response.json();
-  assert.equal(quota.error.code, 'QUOTA_EXCEEDED');
-  assert.equal(quota.error.quotaKind, 'concurrency');
-  assert.ok(quota.error.retryAfterSeconds > 0);
-  assert.ok(Number(response.headers.get('retry-after')) > 0);
+  assert.equal(response.status, 201);
+  const aliceSecond = await response.json();
 
   response = await run('create', 'bob', 'doc-a');
   assert.equal(response.status, 201);
@@ -96,36 +90,21 @@ try {
     assert.equal(response.status, 204);
   }
   response = await run('create', 'alice', 'doc-b');
-  assert.equal(response.status, 429);
-  const rate = await response.json();
-  assert.equal(rate.error.code, 'QUOTA_EXCEEDED');
-  assert.equal(rate.error.quotaKind, 'rate');
-  assert.ok(rate.error.retryAfterSeconds > 3500);
-  assert.equal(events.events.filter(event => event.type === 'VoiceSessionGranted' && event.principalId === principal).length, 3);
+  assert.equal(response.status, 201);
+  const final = await response.json();
+  response = await run('end', 'alice', 'doc-b', final.sessionId);
+  assert.equal(response.status, 204);
+  assert.ok(events.events.filter(event => event.type === 'VoiceSessionGranted' && event.principalId === principal).length >= 5);
   response = await run('end', 'bob', 'doc-a', bob.sessionId);
   assert.equal(response.status, 204);
-
-  const broken = await createNodeServer(config.value, {
-    quotas: {
-      async reserve() { throw new Error('test quota infrastructure unavailable'); },
-      async confirm() {}, async cancel() {}, async release() {},
-    },
-  });
-  unavailable = await startNodeServer(broken, { port: 0 });
-  response = await run('create', 'alice', 'doc-a', undefined, unavailable.port);
-  assert.equal(response.status, 503);
-  const unavailableProblem = await response.json();
-  assert.equal(unavailableProblem.error.code, 'QUOTA_UNAVAILABLE');
-  assert.equal(unavailableProblem.error.retryAfterSeconds, 1);
-  assert.equal(response.headers.get('retry-after'), '1');
+  assert.equal(typeof aliceSecond.sessionId, 'string');
   assert.equal(requestIds.size, upstreamRequests);
 
   console.log(JSON.stringify({
     result: 'passed', transport: 'real BFF handler -> Node HTTP', upstreamRequests,
     checks: ['trusted identity overrides browser headers', 'owner-scoped transport ID', 'principal persistence and audit',
-      'concurrency and hourly quota propagation', 'user isolation', 'renew/end ownership', 'hangup releases concurrency',
-      'quota unavailable fails closed', 'unique request IDs'],
+      'independent document sessions', 'user isolation', 'renew/end ownership', 'unique request IDs'],
   }));
 } finally {
-  await Promise.all([node.close(), unavailable?.close()]);
+  await node.close();
 }

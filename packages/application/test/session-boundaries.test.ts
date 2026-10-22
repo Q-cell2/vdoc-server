@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Usage, VoiceSession, VoiceSessionId, type VoiceSessionEvent } from '@vdoc-server/domain';
 import {
-  DisconnectEventHandler, QuotaEventHandler, RelaySessionOutbox, SessionQuotaService, UsageSettlementPublisher,
+  DisconnectEventHandler, RelaySessionOutbox,
   VoiceSessionStore, migrateSessionRecord, type SessionEvent,
 } from '../src';
 import { alice, as, connected, harness } from './fakes';
@@ -12,48 +12,24 @@ function envelope(event: VoiceSessionEvent): SessionEvent {
 const ended = () => envelope({ type: 'VoiceSessionEnded', aggregateId: 'vs_1', occurredAt: 1, reason: 'client', durationMs: 1, usage: Usage.empty });
 
 describe('independent session subscribers', () => {
-  it('quota handler releases ended sessions and never confirms a stale grant in the same batch', async () => {
-    const h = harness();
-    const confirm = vi.spyOn(h.quotas, 'confirm');
-    const release = vi.spyOn(h.quotas, 'release');
-    const handler = new QuotaEventHandler(new SessionQuotaService(h.quotas, h.repository, h.events, h.clock));
-    expect(await handler.handle([envelope({ type: 'VoiceSessionConnected', aggregateId: 'vs_1', occurredAt: 0, reconnect: false }), ended()])).toEqual({ ok: true, value: undefined });
-    expect(confirm).not.toHaveBeenCalled();
-    expect(release).toHaveBeenCalledWith('alice', 'vs_1');
-    expect(h.connections.closed).toEqual([]);
-    expect(h.events.events).toEqual([]);
-  });
 
   it('disconnect handler only translates ending events to transport commands', async () => {
     const h = harness();
     await new DisconnectEventHandler(h.connections).handle([envelope({ type: 'TurnCompleted', aggregateId: 'vs_1', occurredAt: 0, turnId: 't1', toolCalls: 0 }), ended()]);
     expect(h.connections.closed).toEqual([{ sessionId: 'vs_1', reason: 'client' }]);
-    expect(h.quotas.states.size).toBe(0);
   });
 
-  it('settlement projection keeps stable IDs without modifying domain events', async () => {
-    const h = harness();
-    const publisher = new UsageSettlementPublisher(h.events);
-    const event = envelope({ type: 'TurnCompleted', aggregateId: 'vs_1', occurredAt: 0, turnId: 't1', toolCalls: 0 });
-    await publisher.publish([event]);
-    await publisher.publish([event]);
-    expect(h.events.events[0]).toMatchObject({ settlementId: 'vs_1:turn:t1', usageUnit: 'turn', usageDelta: 1 });
-    expect(h.events.events[1]).toEqual(h.events.events[0]);
-    expect(event).not.toHaveProperty('settlementId');
-  });
-
-  it('acknowledges successful subscribers durably even when quota release fails', async () => {
+  it('acknowledges disconnect durably even when audit publication fails', async () => {
     const h = harness();
     const { sessionId } = await connected(h);
-    vi.spyOn(h.quotas, 'release').mockRejectedValueOnce(new Error('unavailable'));
-    await expect(h.app.handleRealtimeDisconnect.execute(sessionId)).rejects.toThrow('Voice quota service');
+    vi.spyOn(h.events, 'publish').mockRejectedValueOnce(new Error('unavailable'));
+    await expect(h.app.handleRealtimeDisconnect.execute(sessionId)).rejects.toThrow('unavailable');
     const pending = await h.repository.getRecord(sessionId);
     expect(pending?.outbox).toHaveLength(1);
-    expect(pending?.delivered?.publisher).toHaveLength(1);
+    expect(pending?.delivered?.publisher).toBeUndefined();
     expect(pending?.delivered?.['realtime-disconnect']).toHaveLength(1);
-    // Reordered handlers retain delivery identity across reconstruction.
-    const relay = new RelaySessionOutbox(h.repository, [new DisconnectEventHandler(h.connections),
-      new QuotaEventHandler(new SessionQuotaService(h.quotas, h.repository, h.events, h.clock))], new UsageSettlementPublisher(h.events), h.clock);
+    // Subscriber acknowledgements retain delivery identity across reconstruction.
+    const relay = new RelaySessionOutbox(h.repository, [new DisconnectEventHandler(h.connections)], h.events, h.clock);
     expect((await relay.execute(sessionId)).ok).toBe(true);
     expect(h.connections.closed).toHaveLength(1);
     expect(h.events.events.filter(event => event.type === 'VoiceSessionEnded')).toHaveLength(1);
@@ -62,16 +38,14 @@ describe('independent session subscribers', () => {
 });
 
 describe('aggregate and persistence boundaries', () => {
-  it('commit stages outbox without publishing, reserving quota, or closing connections', async () => {
+  it('commit stages outbox without publishing or closing connections', async () => {
     const h = harness();
     const { sessionId } = await connected(h);
     h.events.events.length = 0;
-    const release = vi.spyOn(h.quotas, 'release');
     const session = (await h.repository.get(VoiceSessionId.assume(sessionId)))!;
     session.end('client', h.clock.now());
     await new VoiceSessionStore(h.repository, h.clock).commit(session);
     expect(h.events.events).toEqual([]);
-    expect(release).not.toHaveBeenCalled();
     expect(h.connections.closed).toEqual([]);
     expect((await h.repository.getRecord(sessionId))?.outbox).toMatchObject([{ type: 'VoiceSessionEnded' }]);
   });
@@ -108,14 +82,6 @@ describe('aggregate and persistence boundaries', () => {
     expect(second.userInputs).toBe(2);
     await h.repository.save(second);
     expect(await h.app.reviewToolCall.execute(request('t3'))).toMatchObject({ kind: 'allow' });
-  });
-
-  it('does not sign a grant rejected by quota', async () => {
-    const sign = vi.fn(async () => 'token');
-    const h = harness({ signer: { sign, verify: async () => undefined }, quotaLimits: { maxConcurrentSessions: 1, maxSessionsPerHour: 10 } });
-    expect((await h.app.grantVoiceSession.execute({ documentId: 'one', credentials: as(alice) })).ok).toBe(true);
-    expect(await h.app.grantVoiceSession.execute({ documentId: 'two', credentials: as(alice) })).toMatchObject({ ok: false, error: { code: 'QUOTA_EXCEEDED' } });
-    expect(sign).toHaveBeenCalledTimes(1);
   });
 
   it('queries and refused commands leave expiration to the shared maintenance service', async () => {
@@ -160,14 +126,6 @@ describe('maintenance failure isolation', () => {
     expect(h.events.events.filter(event => event.type === 'VoiceSessionEnded')).toHaveLength(2);
   });
 
-  it('retains the quota rejection code when its best-effort audit sink fails', async () => {
-    const h = harness({ quotaLimits: { maxConcurrentSessions: 1, maxSessionsPerHour: 10 } });
-    await connected(h, 'one');
-    vi.spyOn(h.events, 'publish').mockRejectedValue(new Error('audit down'));
-    expect(await h.app.grantVoiceSession.execute({ credentials: as(alice), documentId: 'two' }))
-      .toMatchObject({ ok: false, error: { code: 'QUOTA_EXCEEDED' } });
-  });
-
   it('keeps a wake-up when stale-record deletion fails', async () => {
     const h = harness();
     const { sessionId } = await connected(h);
@@ -181,5 +139,24 @@ describe('maintenance failure isolation', () => {
     await h.app.sessionMaintenance.execute();
     expect(h.repository.rows.has(sessionId)).toBe(false);
     expect(schedule).toHaveBeenLastCalledWith(undefined);
+  });
+});
+
+describe('document agent session scope', () => {
+  it('allows more than the former cross-document concurrency and hourly limits', async () => {
+    const h = harness();
+    const sessions = [];
+    for (let index = 0; index < 65; index++) sessions.push(await connected(h, `document-${index}`));
+    expect(h.repository.rows.size).toBe(65);
+    const first = sessions[0]!;
+    expect((await h.app.renewSessionGrant.execute({ ...first, credentials: as(alice) })).ok).toBe(true);
+    expect((await h.app.connectRealtime.execute(first)).ok).toBe(true);
+    expect((await h.app.endVoiceSession.execute({ ...first, credentials: as(alice) })).ok).toBe(true);
+    expect(h.connections.closed).toContainEqual({ sessionId: first.sessionId, reason: 'client' });
+    for (const event of h.events.events) {
+      expect(event).not.toHaveProperty('settlementId');
+      expect(event).not.toHaveProperty('usageUnit');
+      expect(event).not.toHaveProperty('usageDelta');
+    }
   });
 });

@@ -74,7 +74,7 @@ vdoc-server 是 vdoc 的语音会话服务端。它负责：谁能对哪篇文�
 | 包 | 层 | 职责 |
 |---|---|---|
 | `@vdoc-server/domain` | 领域 | 四个上下文的模型；零依赖 |
-| `@vdoc-server/application` | 应用 | 用例、端口、错误码、持久化 outbox、配额生命周期与共用维护服务 |
+| `@vdoc-server/application` | 应用 | 用例、端口、错误码、持久化 outbox、会话生命周期与共用维护服务 |
 | `@vdoc-server/config` | 配置 | 环境变量 → 校验后的 `ServerConfig`（启动时一次性报告所有问题）；内置的编辑助手配置 |
 | `@vdoc-server/adapter-security` | 适配器 | HMAC-SHA-256 会话授权（支持换钥）、API key 鉴权（只存摘要，恒定时间比较）、可信用户鉴权（client key 通过后采信 BFF 的用户头） |
 | `@vdoc-server/adapter-vrt` | 适配器 | 接入 vRealTime：模型注册表、每会话一个 Hub、hooks 接到用例、生命周期装饰器、开发用假模型 |
@@ -161,7 +161,7 @@ vdoc（浏览器）                 vdoc-server                                 
 - `VoiceSession` 只持有领域状态、幂等缓存与确认输入序号；`deadline()` 集中时间规则。
 - `DocumentSessionPolicy.admit(open, principal)` 负责数量策略和跨用户互斥，不读取快照。
 - `VoiceSessionStore` 只加载与原子保存。命令显式调用 `SessionLifecycle.persistAndDispatch`。
-- `SessionQuotaService` 管理预留及失败补偿；独立事件处理器确认/释放、断连和生成结算投影。
+- `DisconnectEventHandler` 处理结束事件并关闭连接；审计事件直接发布，不经过配额或结算投影。
 - `SessionRecordStorage`、`SessionMaintenanceStorage` 与领域仓储分离，调用者只依赖所需能力。
 - `EndVoiceSession` 只处理用户挂断，`HandleRealtimeDisconnect` 处理断线；维护任务有独立入口。
 - `SessionMaintenance` 在 Worker alarm 和 Node 定时器中复用，业务入口只判断是否过期。
@@ -173,5 +173,5 @@ vdoc（浏览器）                 vdoc-server                                 
 增加业务流程时新增应用服务或事件处理器，不把流程加入存储方法。改变投递机制不改
 领域快照；改变限额截止规则只改聚合；新增运行时复用维护服务与现有端口。
 
-`check:architecture` 同时约束层内职责：禁止存储服务引入配额/断连/结算，禁止领域层
+`check:architecture` 同时约束层内职责：禁止存储服务直接发布事件或关闭连接，禁止领域层
 出现 outbox 与提供方指标字段，禁止维护服务之外的应用入口提交过期状态。

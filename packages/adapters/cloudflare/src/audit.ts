@@ -20,7 +20,6 @@ export interface AuditPage {
 const METADATA: Readonly<Record<string, readonly string[]>> = {
   VoiceSessionGranted: ['documentId', 'principalId', 'profileId'],
   VoiceSessionGrantRenewed: [],
-  VoiceSessionQuotaRejected: ['code', 'quotaKind'],
   VoiceSessionConnected: ['reconnect'],
   UserInputRecorded: ['sequence'],
   ToolCallReviewed: ['callId', 'tool', 'turnId', 'risk', 'decision', 'code'],
@@ -36,11 +35,10 @@ function project(event: DomainEvent): DomainEvent & Record<string, unknown> {
   if (!VoiceSessionId.parse(event.aggregateId).ok || !TOKEN.test(event.type) || !finite(event.occurredAt)) throw new Error('Invalid audit event metadata.');
   const input = event as DomainEvent & Record<string, unknown>;
   const result: DomainEvent & Record<string, unknown> = { type: event.type, aggregateId: event.aggregateId, occurredAt: event.occurredAt };
-  for (const key of [...(METADATA[event.type] ?? []), 'eventId', 'requestId', 'clientId', 'userId', 'principalId', 'documentId', 'usageUnit', 'usageDelta']) {
+  for (const key of [...(METADATA[event.type] ?? []), 'eventId', 'requestId', 'clientId', 'userId', 'principalId', 'documentId']) {
     const value = input[key];
     if (typeof value === 'boolean' || finite(value) || (typeof value === 'string' && TOKEN.test(value))) result[key] = value;
   }
-  if (typeof input.settlementId === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,511}$/.test(input.settlementId)) result.settlementId = input.settlementId;
   if (event.type === 'ToolCallReviewed' && Array.isArray(input.operations)) {
     result.operations = input.operations.filter((value): value is string => typeof value === 'string' && TOKEN.test(value)).slice(0, 64);
   }
@@ -56,10 +54,18 @@ export class DurableObjectAuditPublisher implements EventPublisher {
   constructor(private readonly storage: AuditStorage, private readonly retainMs = 30 * 86_400_000, private readonly now: () => number = Date.now) {
     if (!Number.isFinite(retainMs) || retainMs <= 0) throw new RangeError('Audit retention must be positive.');
     storage.sql.exec('CREATE TABLE IF NOT EXISTS voice_audit_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, recorded_at INTEGER NOT NULL, payload TEXT NOT NULL)');
-    storage.sql.exec('CREATE TABLE IF NOT EXISTS voice_audit_settlements (id TEXT PRIMARY KEY, recorded_at INTEGER NOT NULL)');
-    storage.sql.exec('CREATE INDEX IF NOT EXISTS voice_settlement_retention ON voice_audit_settlements(recorded_at)');
+    storage.sql.exec('CREATE TABLE IF NOT EXISTS voice_audit_deliveries (id TEXT PRIMARY KEY, recorded_at INTEGER NOT NULL)');
+    storage.sql.exec('CREATE INDEX IF NOT EXISTS voice_delivery_retention ON voice_audit_deliveries(recorded_at)');
     storage.sql.exec('CREATE INDEX IF NOT EXISTS voice_audit_session ON voice_audit_events(session_id, sequence)');
     storage.sql.exec('CREATE INDEX IF NOT EXISTS voice_audit_retention ON voice_audit_events(recorded_at)');
+    // Old deployments keyed deduplication by settlement IDs. Rebuild only the
+    // event-ID index from retained audit rows, then retire that legacy table.
+    if ([...storage.sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'voice_audit_settlements'")].length) {
+      storage.transactionSync(() => {
+        storage.sql.exec("INSERT OR IGNORE INTO voice_audit_deliveries(id, recorded_at) SELECT json_extract(payload, '$.eventId'), recorded_at FROM voice_audit_events WHERE json_type(payload, '$.eventId') = 'text'");
+        storage.sql.exec('DROP TABLE voice_audit_settlements');
+      });
+    }
   }
 
   async publish(events: readonly DomainEvent[]): Promise<void> {
@@ -68,10 +74,10 @@ export class DurableObjectAuditPublisher implements EventPublisher {
     this.storage.transactionSync(() => {
       this.#prune();
       for (const event of safe) {
-        const deliveryId = event.settlementId ?? event.eventId;
+        const deliveryId = event.eventId;
         if (typeof deliveryId === 'string') {
-          if ([...this.storage.sql.exec('SELECT id FROM voice_audit_settlements WHERE id = ?', deliveryId)].length) continue;
-          this.storage.sql.exec('INSERT INTO voice_audit_settlements(id, recorded_at) VALUES (?, ?)', deliveryId, this.now());
+          if ([...this.storage.sql.exec('SELECT id FROM voice_audit_deliveries WHERE id = ?', deliveryId)].length) continue;
+          this.storage.sql.exec('INSERT INTO voice_audit_deliveries(id, recorded_at) VALUES (?, ?)', deliveryId, this.now());
         }
         this.storage.sql.exec('INSERT INTO voice_audit_events(session_id, recorded_at, payload) VALUES (?, ?, ?)', event.aggregateId, this.now(), JSON.stringify(event));
       }
@@ -88,6 +94,6 @@ export class DurableObjectAuditPublisher implements EventPublisher {
 
   #prune(): void {
     this.storage.sql.exec('DELETE FROM voice_audit_events WHERE recorded_at < ?', this.now() - this.retainMs);
-    this.storage.sql.exec('DELETE FROM voice_audit_settlements WHERE recorded_at < ?', this.now() - this.retainMs);
+    this.storage.sql.exec('DELETE FROM voice_audit_deliveries WHERE recorded_at < ?', this.now() - this.retainMs);
   }
 }

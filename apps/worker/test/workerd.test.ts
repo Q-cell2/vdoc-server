@@ -13,7 +13,6 @@ import { connect, type ClientSession } from '@vrealtime/client';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 const CLIENT_KEY = 'workerd-test-client-key-0123456789';
-const QUOTA_KEY = 'workerd-quota-client-key-0123456789';
 const auth = { authorization: `Bearer ${CLIENT_KEY}` };
 const workerDir = fileURLToPath(new URL('..', import.meta.url));
 const wranglerBin = join(dirname(createRequire(import.meta.url).resolve('wrangler/package.json')), 'bin', 'wrangler.js');
@@ -63,9 +62,7 @@ beforeAll(async () => {
   writeFileSync(envFile, [
     'VDOC_SERVER_ENV=test',
     'VDOC_SERVER_MODEL=fake',
-    `VDOC_SERVER_CLIENTS=vdoc-web:${CLIENT_KEY},quota:${QUOTA_KEY}`,
-    'VDOC_SERVER_MAX_CONCURRENT_SESSIONS_PER_PRINCIPAL=2',
-    'VDOC_SERVER_MAX_SESSIONS_PER_HOUR=10',
+    `VDOC_SERVER_CLIENTS=vdoc-web:${CLIENT_KEY}`,
     'VDOC_SERVER_SIGNING_KEYS=test:worker-e2e-signing-secret-at-least-32-characters',
     'VDOC_SERVER_LOG_LEVEL=info',
   ].join('\n'));
@@ -146,41 +143,7 @@ async function openRealtime(documentId: string, granted: Granted, calls: string[
 }
 
 describe('vdoc-server in workerd', () => {
-  it('shares quota across document DOs, releases slots on DELETE, and retains the hourly count', async () => {
-    const headers = { authorization: `Bearer ${QUOTA_KEY}` };
-    const post = (documentId: string) => fetch(`${base}/v1/documents/${documentId}/voice-sessions`, { method: 'POST', headers });
-    const created = await Promise.all(Array.from({ length: 8 }, async (_, index) => {
-      const documentId = `quota-${index}`;
-      const response = await post(documentId);
-      if (response.status === 201) {
-        const { sessionId } = await response.json() as Granted;
-        const row = { documentId, sessionId, headers };
-        grants.push(row);
-        return row;
-      }
-      expect(response.status).toBe(429);
-      expect(Number(response.headers.get('retry-after'))).toBeGreaterThan(0);
-      expect(await response.json()).toMatchObject({ code: 'QUOTA_EXCEEDED' });
-      return undefined;
-    }));
-    const admitted = created.filter((row) => row !== undefined);
-    expect(admitted).toHaveLength(2);
-    for (const { documentId, sessionId } of admitted) {
-      expect((await fetch(`${base}/v1/documents/${documentId}/voice-sessions/${sessionId}`, { method: 'DELETE', headers })).status).toBe(204);
-    }
-    for (let index = 2; index < 10; index++) {
-      const documentId = `quota-rate-${index}`;
-      const response = await post(documentId);
-      expect(response.status).toBe(201);
-      const { sessionId } = await response.json() as Granted;
-      grants.push({ documentId, sessionId, headers });
-      expect((await fetch(`${base}/v1/documents/${documentId}/voice-sessions/${sessionId}`, { method: 'DELETE', headers })).status).toBe(204);
-    }
-    const limited = await post('quota-rate-blocked');
-    expect(limited.status).toBe(429);
-    expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(3500);
-    expect(await limited.json()).toMatchObject({ code: 'QUOTA_EXCEEDED' });
-  });
+
   it('answers health checks and unknown routes at the edge', async () => {
     expect(await (await fetch(`${base}/healthz`)).json()).toEqual({ status: 'ok' });
     expect((await fetch(`${base}/nope`)).status).toBe(404);

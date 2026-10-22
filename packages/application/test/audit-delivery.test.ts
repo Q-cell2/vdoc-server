@@ -1,28 +1,28 @@
 import type { DomainEvent } from '@vdoc-server/domain';
 import { describe, expect, it, vi } from 'vitest';
-import { RelaySessionOutbox, SessionQuotaService, QuotaEventHandler, DisconnectEventHandler, UsageSettlementPublisher } from '../src';
+import { RelaySessionOutbox, DisconnectEventHandler } from '../src';
 import { connected, harness } from './fakes';
 import { loadConfig } from '../../config/src';
 import { createNodeServer } from '../../../apps/node/src/create';
 
 /** Reconstruct the commands from the durable snapshots, retaining only external stores. */
 const restarted = (h: ReturnType<typeof harness>) => new RelaySessionOutbox(h.repository, [
-  new QuotaEventHandler(new SessionQuotaService(h.quotas, h.repository, h.events, h.clock)), new DisconnectEventHandler(h.connections),
-], new UsageSettlementPublisher(h.events), h.clock);
+  new DisconnectEventHandler(h.connections),
+], h.events, h.clock);
 
 const call = (sessionId: string) => ({ sessionId, callId: 'call-delivery', turnId: 'turn-delivery', name: 'read_document' });
 
-describe('durable usage audit delivery', () => {
-  it('serializes concurrent settlement replays in the actual Node composition', async () => {
+describe('durable session audit delivery', () => {
+  it('serializes concurrent turn callbacks in the actual Node composition', async () => {
     const key = 'audit-delivery-node-client-key-not-production';
     const config = loadConfig({ VDOC_SERVER_ENV: 'test', VDOC_SERVER_MODEL: 'fake', VDOC_SERVER_LOG_LEVEL: 'error', VDOC_SERVER_CLIENTS: `web:${key}` });
     if (!config.ok) throw new Error(config.errors.join('; '));
     const h = harness();
-    const server = await createNodeServer(config.value, { sessions: h.repository, subscribers: [h.events], clock: h.clock, quotas: h.quotas });
-    const created = await server.application.grantVoiceSession.execute({ credentials: { bearer: key, trustedUserId: 'node-user' }, documentId: 'node-settlements' });
+    const server = await createNodeServer(config.value, { sessions: h.repository, subscribers: [h.events], clock: h.clock });
+    const created = await server.application.grantVoiceSession.execute({ credentials: { bearer: key, trustedUserId: 'node-user' }, documentId: 'node-audit' });
     if (!created.ok) throw new Error(created.error.message);
     const { sessionId } = created.value.session;
-    expect((await server.application.connectRealtime.execute({ sessionId, documentId: 'node-settlements', token: created.value.grant.token })).ok).toBe(true);
+    expect((await server.application.connectRealtime.execute({ sessionId, documentId: 'node-audit', token: created.value.grant.token })).ok).toBe(true);
     try {
       await Promise.all(Array.from({ length: 8 }, () => server.application.completeTurn.execute({ sessionId, turnId: 'same-node-turn' })));
       expect(h.repository.rows.get(sessionId)?.usage.turns).toBe(1);
@@ -55,7 +55,7 @@ describe('durable usage audit delivery', () => {
     expect(h.repository.rows.get(sessionId)?.usage.turns).toBe(1);
     expect(h.events.events.filter(event => event.type === 'TurnCompleted')).toHaveLength(1);
     expect(h.events.events.find(event => event.type === 'TurnCompleted')).toMatchObject({
-      aggregateId: sessionId, turnId: 'turn-delivery', settlementId: `${sessionId}:turn:turn-delivery`, usageUnit: 'turn', usageDelta: 1,
+      aggregateId: sessionId, turnId: 'turn-delivery',
     });
   });
 
@@ -76,11 +76,11 @@ describe('durable usage audit delivery', () => {
     expect(h.events.events.filter(event => event.type === 'ToolCallReviewed')).toHaveLength(1);
     expect(h.events.events.filter(event => event.type === 'ToolCallCompleted')).toHaveLength(1);
     expect(h.events.events.find(event => event.type === 'ToolCallCompleted')).toMatchObject({
-      callId: input.callId, turnId: input.turnId, settlementId: `${sessionId}:call:${input.callId}`,
+      callId: input.callId, turnId: input.turnId,
     });
   });
 
-  it('retries an ambiguous publication with stable IDs so an idempotent sink settles only once', async () => {
+  it('retries an ambiguous publication with stable IDs so an idempotent sink records only once', async () => {
     const h = harness();
     const { sessionId } = await connected(h);
     const rows = new Map<string, DomainEvent>();

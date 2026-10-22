@@ -1,5 +1,7 @@
 # User identity acceptance record
 
+> Historical report: cross-document principal quotas and usage settlement have since been removed. Quota rejection/lease tests and billing-delta acceptance items below describe the earlier implementation, not the current contract. Current behavior is documented in TRUSTED_USER_IDENTITY.md and AUDIT.md.
+
 Date: 2026-10-19. Server baseline: `104be6cab93af71fdd2ba5c4d47578c90d4ccacd` (main, SDK integration PR #23). App implementation: [vdoc PR #101](https://github.com/Q-cell2/vdoc/pull/101), code commit `e45fae082c69cb0f23710ca625ddc87b4f00ed5a`, stacked on SDK PR #100 (`25e1c68`). Final heads are recorded in the two PRs. Both repositories use `@vrealtime/* 0.2.0`; dependency and adapter files are unchanged in this identity work.
 
 ## Automated results

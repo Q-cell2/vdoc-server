@@ -1,8 +1,7 @@
 import { InMemoryVoiceSessionRepository, RecordingEventPublisher } from '@vdoc-server/adapter-memory';
 import { HmacGrantSigner } from '@vdoc-server/adapter-security';
-import type { PrincipalQuotaStore } from '@vdoc-server/application';
 import { loadConfig } from '@vdoc-server/config';
-import { DocumentId, SessionGrant, VoiceSessionId } from '@vdoc-server/domain';
+import { SessionGrant, VoiceSessionId } from '@vdoc-server/domain';
 import { createHash } from 'node:crypto';
 import { connect } from '@vrealtime/client';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -18,18 +17,17 @@ const headersOf = (userId?: string, key: string | undefined = webKey): Record<st
   ...(userId === undefined ? {} : { 'x-vdoc-user-id': userId }),
 });
 
-async function fixture(options: { allowClientOnly?: boolean; quotas?: PrincipalQuotaStore } = {}) {
+async function fixture(options: { allowClientOnly?: boolean } = {}) {
   const config = loadConfig({
     VDOC_SERVER_ENV: 'test', VDOC_SERVER_MODEL: 'fake', VDOC_SERVER_LOG_LEVEL: 'error',
     VDOC_SERVER_CLIENTS: `web:${webKey},other:${otherKey}`,
     VDOC_SERVER_ALLOW_CLIENT_ONLY: String(options.allowClientOnly ?? false),
-    VDOC_SERVER_MAX_CONCURRENT_SESSIONS_PER_PRINCIPAL: '2', VDOC_SERVER_MAX_SESSIONS_PER_HOUR: '4',
   });
   if (!config.ok) throw new Error(config.errors.join('; '));
   const sessions = new InMemoryVoiceSessionRepository();
   const events = new RecordingEventPublisher();
   const server = await createNodeServer(config.value, {
-    sessions, subscribers: [events], ...(options.quotas ? { quotas: options.quotas } : {}),
+    sessions, subscribers: [events],
   });
   const running = await startNodeServer(server, { port: 0 });
   closes.push(running.close);
@@ -103,39 +101,11 @@ describe('trusted BFF user identity over the Node HTTP transport', () => {
       connection.sendText('hello');
       await expect.poll(() => h.events.events.some(event => event.type === 'TurnCompleted' && event.aggregateId === alice.sessionId)).toBe(true);
       expect(h.events.events.find(event => event.type === 'TurnCompleted' && event.aggregateId === alice.sessionId)).toMatchObject({
-        principalId: principalOf('web', 'alice'), clientId: 'web', userId: 'alice', usageUnit: 'turn', usageDelta: 1,
+        principalId: principalOf('web', 'alice'), clientId: 'web', userId: 'alice',
       });
       expect((await fetch(h.url('socket-alice', alice.sessionId), { method: 'DELETE', headers: headersOf('alice') })).status).toBe(204);
     } finally { await connection.close(); }
     await expect(open(alice.grant.token)).rejects.toThrow();
-  });
-
-  it('shares concurrency and hourly quotas across one user’s documents while isolating another user', async () => {
-    const h = await fixture();
-    const first = await granted(await h.create('alice-one', 'alice'));
-    const second = await granted(await h.create('alice-two', 'alice'));
-    const concurrent = await h.create('alice-three', 'alice');
-    expect(concurrent.status).toBe(429);
-    expect(Number(concurrent.headers.get('retry-after'))).toBeGreaterThan(0);
-    expect(await concurrent.json()).toMatchObject({ code: 'QUOTA_EXCEEDED', quotaKind: 'concurrency' });
-    await granted(await h.create('bob-one', 'bob'));
-    const end = async (doc: string, sessionId: string) => {
-      expect((await fetch(h.url(doc, sessionId), { method: 'DELETE', headers: headersOf('alice') })).status).toBe(204);
-    };
-    await end('alice-one', first.sessionId);
-    const third = await granted(await h.create('alice-three', 'alice'));
-    await end('alice-two', second.sessionId);
-    await end('alice-three', third.sessionId);
-    const fourth = await granted(await h.create('alice-four', 'alice'));
-    await end('alice-four', fourth.sessionId);
-    const hourly = await h.create('alice-five', 'alice');
-    expect(hourly.status).toBe(429);
-    expect(Number(hourly.headers.get('retry-after'))).toBeGreaterThan(3500);
-    expect(await hourly.json()).toMatchObject({ code: 'QUOTA_EXCEEDED', quotaKind: 'rate' });
-    expect(h.events.events).toContainEqual(expect.objectContaining({
-      type: 'VoiceSessionQuotaRejected', principalId: principalOf('web', 'alice'), clientId: 'web', userId: 'alice', quotaKind: 'rate',
-    }));
-    await granted(await h.create('bob-two', 'bob'));
   });
 
   it('ignores forged body identity and never uses it to fill a missing trusted header', async () => {
@@ -147,9 +117,8 @@ describe('trusted BFF user identity over the Node HTTP transport', () => {
     const created = await granted(await h.create('body-alice', 'alice', webKey, forged));
     expect((await h.sessions.get(VoiceSessionId.assume(created.sessionId)))?.principalId).toBe(principalOf('web', 'alice'));
     await granted(await h.create('body-alice-two', 'alice'));
-    const denied = await h.create('body-quota', 'alice', webKey, forged);
-    expect(denied.status).toBe(429);
-    await denied.text();
+    const third = await granted(await h.create('body-alice-three', 'alice', webKey, forged));
+    expect((await h.sessions.get(VoiceSessionId.assume(third.sessionId)))?.principalId).toBe(principalOf('web', 'alice'));
     await granted(await h.create('body-bob', 'bob'));
   });
 
@@ -172,33 +141,15 @@ describe('trusted BFF user identity over the Node HTTP transport', () => {
     expect((await fetch(h.url('owner', created.sessionId), { headers: headersOf('alice') })).status).toBe(200);
   });
 
-  it('namespaces identical user IDs by the verified app client for ownership and quota', async () => {
+  it('namespaces identical user IDs by the verified app client for ownership', async () => {
     const h = await fixture();
     const first = await granted(await h.create('web-one', 'same-user'));
     await granted(await h.create('web-two', 'same-user'));
-    const exhausted = await h.create('web-three', 'same-user');
-    expect(exhausted.status).toBe(429);
-    await exhausted.text();
+    await granted(await h.create('web-three', 'same-user'));
     const other = await granted(await h.create('other-one', 'same-user', otherKey));
     expect((await h.sessions.get(VoiceSessionId.assume(first.sessionId)))?.principalId).toBe(principalOf('web', 'same-user'));
     expect((await h.sessions.get(VoiceSessionId.assume(other.sessionId)))?.principalId).toBe(principalOf('other', 'same-user'));
     expect(principalOf('web', 'same-user')).not.toBe(principalOf('other', 'same-user'));
-  });
-
-  it('fails closed with a retryable 503 and no created session when quota storage is unavailable', async () => {
-    const quotas: PrincipalQuotaStore = {
-      async reserve() { throw new Error('test quota infrastructure unavailable'); },
-      async confirm() {},
-      async cancel() {},
-      async release() {},
-    };
-    const h = await fixture({ quotas });
-    const response = await h.create('quota-unavailable', 'alice');
-    expect(response.status).toBe(503);
-    expect(response.headers.get('retry-after')).toBe('1');
-    expect(await response.json()).toMatchObject({ code: 'QUOTA_UNAVAILABLE', status: 503 });
-    expect(h.events.events).toHaveLength(0);
-    expect(await h.sessions.findUnended(DocumentId.assume('quota-unavailable'))).toEqual([]);
   });
 
   it('supports explicit legacy client-only mode without accepting malformed present user headers', async () => {

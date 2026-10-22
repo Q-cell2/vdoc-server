@@ -23,7 +23,7 @@ const events = new RecordingEventPublisher();
 const telemetry = new RecordingEventPublisher();
 
 beforeAll(async () => {
-  const config = loadConfig({ VDOC_SERVER_ENV: 'test', VDOC_SERVER_CLIENTS: `vdoc-web:${CLIENT_KEY}`, VDOC_SERVER_MODEL: 'fake', VDOC_SERVER_LOG_LEVEL: 'error', VDOC_SERVER_MAX_CONCURRENT_SESSIONS_PER_PRINCIPAL: '100' });
+  const config = loadConfig({ VDOC_SERVER_ENV: 'test', VDOC_SERVER_CLIENTS: `vdoc-web:${CLIENT_KEY}`, VDOC_SERVER_MODEL: 'fake', VDOC_SERVER_LOG_LEVEL: 'error' });
   if (!config.ok) throw new Error(config.errors.join('; '));
   const server = await createNodeServer(config.value, { subscribers: [events], telemetrySubscribers: [telemetry], fakeResponder: respond, realtime: { resumeWindowMs: 150 } });
   const running = await startNodeServer(server, { port: 0 });
