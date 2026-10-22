@@ -1,7 +1,9 @@
+import type { SessionLifecycle } from '../session-lifecycle';
 import { DocumentId, ProfileId, VoiceSession, VoiceSessionId, err, ok, type AgentProfileRepository, type DocumentSessionPolicy, type Result } from '@vdoc-server/domain';
 import { appError, fromDomain, type AppError } from '../errors';
 import type { CallerAuthenticator, CallerCredentials, Clock, GrantSigner, IdGenerator } from '../ports';
-import { QuotaUnavailable, quotaUnavailable, type VoiceSessionStore } from '../voice-session-store';
+import type { VoiceSessionStore } from '../voice-session-store';
+import type { SessionQuotaService } from '../session-quota-service';
 import { authenticateCaller } from './caller';
 import { toView, type GrantView, type VoiceSessionView } from './views';
 
@@ -19,7 +21,7 @@ export interface GrantVoiceSessionOutput {
 /** Command: a client wants to start talking about a document. */
 export class GrantVoiceSession {
   constructor(private readonly deps: {
-    store: VoiceSessionStore; profiles: AgentProfileRepository; authenticator: CallerAuthenticator;
+    store: VoiceSessionStore; lifecycle: SessionLifecycle; quotas: SessionQuotaService; profiles: AgentProfileRepository; authenticator: CallerAuthenticator;
     signer: GrantSigner; clock: Clock; ids: IdGenerator; admission: DocumentSessionPolicy;
   }) {}
 
@@ -39,33 +41,27 @@ export class GrantVoiceSession {
     }
 
     const now = clock.now();
-    const open: VoiceSession[] = [];
-    for (const session of await store.findUnended(documentId.value)) {
-      if (session.expireIfOverdue(now)) await store.commit(session);
-      else open.push(session);
-    }
-    const crossesUser = open.some((session) => !session.isOwnedBy(principal.value.id) &&
-      (principal.value.kind === 'user' || session.toSnapshot().principalKind === 'user'));
-    if (crossesUser) return err(appError('DOCUMENT_BUSY', 'This document has a session owned by another principal.'));
-    const admitted = admission.admit(open);
+    const open = (await store.findUnended(documentId.value)).filter(session => session.isOpenAt(now));
+    const admitted = admission.admit(open, principal.value);
     if (!admitted.ok) return err(fromDomain(admitted.error));
-    const session = VoiceSession.grant({ id: VoiceSessionId.assume(ids.next('vs')), documentId: documentId.value, principal: principal.value, profile, now, ...(input.credentials.requestId ? { requestId: input.credentials.requestId } : {}) });
+    const session = VoiceSession.grant({ id: VoiceSessionId.assume(ids.next('vs')), documentId: documentId.value, principal: principal.value, profile, now });
     const grant = session.issueGrant(now);
     if (!grant.ok) return err(fromDomain(grant.error));
-    const token = await signer.sign(grant.value);
-    const reserved = await store.reserveQuota(session, admitted.value, input.credentials.requestId);
-    if (!reserved.ok) return reserved;
-    try {
+    const identity = {
+      clientId: principal.value.clientId ?? principal.value.id,
+      ...(principal.value.userId ? { userId: principal.value.userId } : {}),
+      ...(input.credentials.requestId ? { requestId: input.credentials.requestId } : {}),
+    };
+    return this.deps.quotas.withReservation(session, { supersedes: admitted.value, identity, requestId: input.credentials.requestId }, async () => {
+      const token = await signer.sign(grant.value);
       for (const superseded of admitted.value) {
         superseded.end('superseded', now);
-        await store.commit(superseded, input.credentials.requestId);
+        const ended = await this.deps.lifecycle.persistAndDispatch(superseded, input.credentials.requestId);
+        if (!ended.ok) return ended;
       }
-      await store.commit(session, input.credentials.requestId);
-    } catch (error) {
-      await store.reconcileCreation(session);
-      if (error instanceof QuotaUnavailable) return err(quotaUnavailable());
-      throw error;
-    }
-    return ok({ session: toView(session, now), grant: { token, expiresAt: grant.value.expiresAt } });
+      const committed = await this.deps.lifecycle.persistAndDispatch(session, input.credentials.requestId, identity);
+      if (!committed.ok) return committed;
+      return ok({ session: toView(session, now), grant: { token, expiresAt: grant.value.expiresAt } });
+    });
   }
 }

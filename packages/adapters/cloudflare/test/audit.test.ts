@@ -50,6 +50,7 @@ describe('SQLite audit publisher', () => {
         event('TurnCompleted', { timeToFirstAudioMs: 24, interruptLatencyMs: -1, modelToolCalls: 2, instructions: 'secret-content' }),
         event('VoiceSessionEnded', { reason: 'client', usage: { turns: 2, toolCalls: 3, title: 'secret-content' } }),
         event('FutureEvent', { text: 'secret-content' }),
+        event('UserInputRecorded', { sequence: 3, text: 'secret-content' }),
       ]);
       const rows = sink.list('vs_a').events.map((row) => row.event);
       expect(JSON.stringify(rows)).not.toMatch(/secret-content|private document text|arguments|fingerprint|instructions/);
@@ -58,6 +59,7 @@ describe('SQLite audit publisher', () => {
       expect(rows[2]).not.toHaveProperty('interruptLatencyMs');
       expect(rows[3]?.usage).toEqual({ turns: 2, toolCalls: 3 });
       expect(rows[4]).toEqual(event('FutureEvent'));
+      expect(rows[5]).toEqual(event('UserInputRecorded', { sequence: 3 }));
     } finally { storage.db.close(); }
   });
 

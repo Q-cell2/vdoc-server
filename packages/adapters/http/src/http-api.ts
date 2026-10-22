@@ -1,7 +1,7 @@
-import { QuotaUnavailable, quotaUnavailable, type Application } from '@vdoc-server/application';
+import { type Application } from '@vdoc-server/application';
 import { CorsPolicy } from './cors';
 import { isWebSocketUpgrade, matchRealtimeRoute } from './realtime-route';
-import { fromAppError, json, problem } from './responses';
+import { json, problem } from './responses';
 import { Router } from './router';
 import { VoiceSessionController } from './voice-session-controller';
 
@@ -59,7 +59,6 @@ export class HttpApi {
     try {
       return await match.handler(request, match.params);
     } catch (error) {
-      if (error instanceof QuotaUnavailable) return fromAppError(quotaUnavailable());
       this.options.logger?.log('error', 'unhandled request error', { method: request.method, path: pathname, error: String(error) });
       return problem(500, 'INTERNAL', 'Something went wrong.');
     }

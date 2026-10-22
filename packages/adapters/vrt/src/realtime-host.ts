@@ -1,6 +1,9 @@
-import type { AgentSessionSettings, AppError, Application, RealtimeConnections } from '@vdoc-server/application';
+import { parseTurnMetrics, type EventPublisher } from '@vdoc-server/application';
+import { toSessionConfig } from './session-config';
+export { toSessionConfig } from './session-config';
+import type { AppError, Application, RealtimeConnections } from '@vdoc-server/application';
 import { err, ok, type EndReason, type Result, type VoiceSessionId } from '@vdoc-server/domain';
-import { defineAgent, type AgentDefinition, type SessionConfig } from '@vrealtime/core';
+import { defineAgent, type AgentDefinition } from '@vrealtime/core';
 import { Hub, type Connection, type WebSocketLike } from '@vrealtime/server';
 import { withLifecycle } from './lifecycle-model';
 import type { ModelRegistry } from './model-registry';
@@ -9,8 +12,8 @@ import { observeErrors, type ProtocolError } from './protocol-errors';
 
 /** The use cases the realtime edge drives. */
 export type RealtimeHandlers = Pick<Application,
-  'resolveRealtimeRoute' | 'authorizeRealtimeConnection' | 'configureRealtimeSession' |
-  'reviewToolCall' | 'recordToolResult' | 'completeTurn' | 'endVoiceSession'>;
+  'resolveRealtimeRoute' | 'connectRealtime' | 'configureRealtimeSession' |
+  'reviewToolCall' | 'recordToolResult' | 'completeTurn' | 'handleRealtimeDisconnect' | 'recordUserInput'>;
 
 export interface RealtimeLogger {
   log(level: 'debug' | 'info' | 'warn' | 'error', message: string, fields?: Readonly<Record<string, unknown>>): void;
@@ -22,9 +25,10 @@ export interface Scheduler {
 }
 
 export interface RealtimeHostOptions {
-  /** Resolved lazily: the application needs this host as its `RealtimeConnections`. */
-  readonly handlers: () => RealtimeHandlers;
+  /** Runtime invokes these application commands. */
+  readonly handlers: RealtimeHandlers;
   readonly models: ModelRegistry;
+  readonly telemetry?: EventPublisher;
   readonly logger?: RealtimeLogger;
   readonly scheduler?: Scheduler;
   /** How long a dropped connection may resume before the session ends. Default 30 s. */
@@ -57,7 +61,6 @@ export class RealtimeRoom {
   #liveModels = 0;
   #everOpened = false;
   #disposed = false;
-  #userInputs = 0;
   readonly #reportedErrors = new Set<string>();
 
   constructor(
@@ -75,13 +78,6 @@ export class RealtimeRoom {
 
   get disposed(): boolean { return this.#disposed; }
   get everOpened(): boolean { return this.#everOpened; }
-  /** User utterances and text messages across this room's model sessions. In memory: a restart starts again at 0, which only makes pending confirmations ask again. */
-  get userInputs(): number { return this.#userInputs; }
-
-  /** @internal */ userInput(): void {
-    this.#userInputs++;
-  }
-
   /** @internal */ modelOpened(): void {
     this.#liveModels++;
     this.#everOpened = true;
@@ -125,7 +121,7 @@ export class RealtimeHost implements RealtimeConnections {
 
   /** Checks the route against an open session, then returns its room (created on first use). */
   async open(route: RealtimeRouteInput): Promise<Result<RealtimeRoom, AppError>> {
-    const resolved = await this.options.handlers().resolveRealtimeRoute.execute(route);
+    const resolved = await this.options.handlers.resolveRealtimeRoute.execute(route);
     if (!resolved.ok) return resolved;
     const existing = this.#rooms.get(resolved.value.sessionId);
     if (existing && !existing.disposed) return ok(existing);
@@ -158,7 +154,7 @@ export class RealtimeHost implements RealtimeConnections {
     const handlers = this.options.handlers;
     let room!: RealtimeRoom;
     const context = new ContextUpdates(
-      (value) => handlers().configureRealtimeSession.execute({ sessionId, context: value }),
+      (value) => handlers.configureRealtimeSession.execute({ sessionId, context: value }),
       (code) => this.#log('warn', 'context update refused', { sessionId, code }),
     );
     const created = this.options.models.create(choice);
@@ -167,7 +163,9 @@ export class RealtimeHost implements RealtimeConnections {
       closed: (session) => { context.remove(session); room.modelClosed(); },
       // Same report as the START_FAILED frame that follows, which a client that already left never gets.
       failed: (error) => room.protocolError({ code: 'START_FAILED', message: error instanceof Error ? error.message : String(error), recoverable: false }),
-      userInput: () => room.userInput(),
+      userInput: () => {
+        void handlers.recordUserInput.execute({ sessionId }).catch((error: unknown) => this.#log('error', 'recording user input failed', { sessionId, error: String(error) }));
+      },
     });
     const agent: AgentDefinition = defineAgent({
       model,
@@ -176,18 +174,21 @@ export class RealtimeHost implements RealtimeConnections {
       clientToolTimeoutMs: this.options.clientToolTimeoutMs ?? 15_000,
       hooks: {
         beforeToolCall: async (call) => {
-          const decision = await handlers().reviewToolCall.execute({
-            sessionId, callId: call.callId, name: call.name, arguments: call.arguments, turnId: call.turn.id, userInputs: room.userInputs,
+          const decision = await handlers.reviewToolCall.execute({
+            sessionId, callId: call.callId, name: call.name, arguments: call.arguments, turnId: call.turn.id,
           });
           return decision.kind === 'allow' ? { action: 'allow' } : { action: 'reject', message: decision.message };
         },
         afterToolCall: (call, result) => {
-          void handlers().recordToolResult.execute({
+          void handlers.recordToolResult.execute({
             sessionId, callId: call.callId, name: call.name, turnId: call.turn.id, ok: result.ok, code: result.ok ? undefined : result.code,
           }).catch((error: unknown) => this.#log('error', 'recording a tool result failed', { sessionId, error: String(error) }));
         },
         onTurnEnd: (turn, metrics) => {
-          void handlers().completeTurn.execute({ sessionId, turnId: turn.id, metrics })
+          const telemetry = { type: 'TurnTelemetry', aggregateId: sessionId, occurredAt: Date.now(), turnId: turn.id, ...parseTurnMetrics(metrics) };
+          void this.options.telemetry?.publish([telemetry])
+            .catch((error: unknown) => this.#log('error', 'publishing turn telemetry failed', { sessionId, error: String(error) }));
+          void handlers.completeTurn.execute({ sessionId, turnId: turn.id })
             .catch((error: unknown) => this.#log('error', 'completing a turn failed', { sessionId, error: String(error) }));
         },
         onError: (error, recoverable) => this.#log(recoverable ? 'warn' : 'error', 'realtime model error', { sessionId, error: error.message }),
@@ -195,7 +196,7 @@ export class RealtimeHost implements RealtimeConnections {
     });
     const hub = new Hub(agent, {
       authenticate: async ({ token }) => {
-        const identity = await handlers().authorizeRealtimeConnection.execute({ token, documentId, sessionId });
+        const identity = await handlers.connectRealtime.execute({ token, documentId, sessionId });
         if (!identity.ok) {
           this.#log('warn', 'realtime connection refused', { sessionId, code: identity.error.code });
           return null;
@@ -203,7 +204,7 @@ export class RealtimeHost implements RealtimeConnections {
         return { ...identity.value, id: identity.value.sessionId };
       },
       configure: async (_principal, hello) => {
-        const settings = await handlers().configureRealtimeSession.execute({ sessionId, context: hello.context });
+        const settings = await handlers.configureRealtimeSession.execute({ sessionId, context: hello.context });
         if (!settings.ok) throw new Error(settings.error.message);
         return toSessionConfig(settings.value);
       },
@@ -236,7 +237,7 @@ export class RealtimeHost implements RealtimeConnections {
     const serverClosed = room.disposed;
     this.#dispose(room);
     if (serverClosed) return;
-    void this.options.handlers().endVoiceSession.bySystem(room.sessionId, 'disconnected')
+    void this.options.handlers.handleRealtimeDisconnect.execute(room.sessionId)
       .catch((error: unknown) => this.#log('error', 'ending a disconnected session failed', { sessionId: room.sessionId, error: String(error) }));
   }
 
@@ -248,14 +249,4 @@ export class RealtimeHost implements RealtimeConnections {
   #log(level: 'debug' | 'info' | 'warn' | 'error', message: string, fields: Record<string, unknown>): void {
     this.options.logger?.log(level, message, fields);
   }
-}
-
-/** Application settings → vRealTime session config. Providers want ISO 639-1 language codes. */
-export function toSessionConfig(settings: AgentSessionSettings): Partial<SessionConfig> {
-  return {
-    instructions: settings.instructions,
-    turnDetection: settings.turnDetection,
-    ...(settings.voice ? { voice: settings.voice } : {}),
-    inputTranscription: { language: settings.language.split('-')[0]!.toLowerCase(), ...(settings.vocabulary.length > 0 ? { vocabulary: settings.vocabulary } : {}) },
-  };
 }

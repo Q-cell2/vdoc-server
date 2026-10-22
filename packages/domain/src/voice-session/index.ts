@@ -1,6 +1,6 @@
 export { DocumentSessionPolicy, type ConcurrencyStrategy } from './document-session-policy';
 export type {
-  EndReason, ToolCallCompleted, ToolCallReviewed, TurnCompleted, TurnMetrics,
+  EndReason, UserInputRecorded, ToolCallCompleted, ToolCallReviewed, TurnCompleted,
   VoiceSessionConnected, VoiceSessionEnded, VoiceSessionEvent, VoiceSessionGranted,
 } from './events';
 export { SessionLimits } from './session-limits';

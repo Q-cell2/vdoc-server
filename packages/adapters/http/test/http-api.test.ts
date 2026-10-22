@@ -10,7 +10,7 @@ function api(overrides: Partial<Record<keyof App, unknown>> = {}, origins: strin
     grantVoiceSession: { execute: vi.fn(async () => ({ ok: true, value: { session: view, grant: { token: 't', expiresAt: 1 } } })) },
     getVoiceSession: { execute: vi.fn(async () => ({ ok: false, error: appError('NOT_FOUND', 'No such session.') })) },
     renewSessionGrant: { execute: vi.fn(async () => ({ ok: false, error: appError('UNAUTHENTICATED', 'Key required.') })) },
-    endVoiceSession: { byClient: vi.fn(async () => ({ ok: true, value: undefined })) },
+    endVoiceSession: { execute: vi.fn(async () => ({ ok: true, value: undefined })) },
     ...overrides,
   } as unknown as Pick<Application, keyof App>;
   return { http: new HttpApi({ app, allowedOrigins: origins }), app };

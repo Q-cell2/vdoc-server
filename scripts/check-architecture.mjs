@@ -104,6 +104,25 @@ for (const dir of packageDirs()) {
   }
 }
 
+// These boundaries matter inside the layers as well: storing an aggregate must
+// never become an implicit quota, billing or connection command again.
+const sessionStore = readFileSync(join(root, 'packages/application/src/voice-session-store.ts'), 'utf8');
+if (/\b(?:PrincipalQuotaStore|SessionQuotaService|RealtimeConnections|settlementId|usageUnit)\b|\.(?:publish|close|reserve|release)\(/.test(sessionStore)) {
+  problems.push('VoiceSessionStore must only load and persist session/outbox state');
+}
+for (const file of sourceFiles(join(root, 'packages/domain/src'))) {
+  const source = readFileSync(file, 'utf8');
+  if (/\b(?:pendingAuditEvents|nextAuditSequence|stageAuditEvents|TurnMetrics|settlementId|usageUnit)\b/.test(source)) {
+    problems.push(`${relative(root, file)}: infrastructure delivery, telemetry and settlement state belongs outside the domain`);
+  }
+}
+for (const file of sourceFiles(join(root, 'packages/application/src'))) {
+  if (file === join(root, 'packages/application/src/session-maintenance.ts')) continue;
+  if (/\.expireIfOverdue\(/.test(readFileSync(file, 'utf8'))) {
+    problems.push(`${relative(root, file)}: expiration writes must go through session maintenance`);
+  }
+}
+
 if (problems.length > 0) {
   console.error(`Architecture check failed:\n  - ${problems.join('\n  - ')}`);
   process.exit(1);

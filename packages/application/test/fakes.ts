@@ -2,9 +2,9 @@ import {
   AgentProfile, DocumentSessionPolicy, InstructionTemplate, PrincipalId, ProfileId, RiskAssessor, SessionGrant, SessionLimits,
   VoiceSession, PrincipalQuota, ok, defaultToolPolicy,
   type AgentProfileRepository, type DocumentId, type DomainEvent, type EndReason, type Principal, type VoiceSessionId,
-  type VoiceSessionRepository, type VoiceSessionSnapshot, type PrincipalQuotaLimits, type PrincipalQuotaState, type QuotaReservation,
+  type VoiceSessionSnapshot, type PrincipalQuotaLimits, type PrincipalQuotaState, type QuotaReservation,
 } from '@vdoc-server/domain';
-import { createApplication, type CommandRunner, type CallerAuthenticator, type CallerCredentials, type Clock, type EventPublisher, type GrantSigner, type IdGenerator, type PrincipalQuotaStore, type RealtimeConnections } from '../src';
+import { createApplication, migrateSessionRecord, type SessionRecord, type SessionRepository, type CommandRunner, type CallerAuthenticator, type CallerCredentials, type Clock, type EventPublisher, type GrantSigner, type IdGenerator, type PrincipalQuotaStore, type RealtimeConnections } from '../src';
 
 export class FakeClock implements Clock {
   constructor(public time = 1_000) {}
@@ -37,7 +37,15 @@ class FakeAuthenticator implements CallerAuthenticator {
   }
 }
 
-class MapRepository implements VoiceSessionRepository {
+class MapRepository implements SessionRepository {
+  readonly envelopes = new Map<string, SessionRecord>();
+  async getRecord(id: string): Promise<SessionRecord | undefined> { return structuredClone(this.envelopes.get(id)); }
+  async putRecord(record: SessionRecord): Promise<void> {
+    this.envelopes.set(record.session.id, structuredClone(record)); this.rows.set(record.session.id, structuredClone(record.session));
+  }
+  async *records(): AsyncGenerator<SessionRecord> { for (const row of this.envelopes.values()) yield structuredClone(row); }
+  async removeRecords(ids: readonly string[]): Promise<void> { for (const id of ids) { this.rows.delete(id); this.envelopes.delete(id); } }
+  async schedule(_next: number | undefined): Promise<void> {}
   readonly rows = new Map<string, VoiceSessionSnapshot>();
   async get(id: VoiceSessionId): Promise<VoiceSession | undefined> {
     const row = this.rows.get(id);
@@ -46,7 +54,10 @@ class MapRepository implements VoiceSessionRepository {
   async findUnended(documentId: DocumentId): Promise<VoiceSession[]> {
     return [...this.rows.values()].filter((r) => r.documentId === documentId && r.status !== 'ended').map((r) => VoiceSession.restore(structuredClone(r)));
   }
-  async save(session: VoiceSession): Promise<void> { this.rows.set(session.id, structuredClone(session.toSnapshot())); }
+  async save(session: VoiceSession): Promise<void> {
+    const previous = await this.getRecord(session.id);
+    await this.putRecord(previous ? { ...previous, session: session.toSnapshot() } : migrateSessionRecord(session.toSnapshot()));
+  }
 }
 
 class Profiles implements AgentProfileRepository {
@@ -114,7 +125,7 @@ export async function connected(h: ReturnType<typeof harness>, documentId = 'doc
   const granted = await h.app.grantVoiceSession.execute({ credentials: as(alice), documentId });
   if (!granted.ok) throw new Error(granted.error.message);
   const { sessionId } = granted.value.session;
-  const identity = await h.app.authorizeRealtimeConnection.execute({ token: granted.value.grant.token, documentId, sessionId });
+  const identity = await h.app.connectRealtime.execute({ token: granted.value.grant.token, documentId, sessionId });
   if (!identity.ok) throw new Error(identity.error.message);
   return { sessionId, documentId, token: granted.value.grant.token };
 }

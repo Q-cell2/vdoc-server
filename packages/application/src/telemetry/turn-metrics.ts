@@ -1,4 +1,12 @@
-import type { TurnMetrics } from '@vdoc-server/domain';
+/** Optional measurements; missing latency means it was not measured, never zero. */
+export interface TurnMetrics {
+  readonly timeToFirstAudioMs?: number;
+  readonly timeToFirstToolCallMs?: number;
+  readonly interruptLatencyMs?: number;
+  /** Complete calls admitted to the SDK's current epoch, counted before policy and execution. */
+  readonly modelToolCalls?: number;
+}
+
 
 /** Provider instrumentation is untrusted metadata; copy only finite nonnegative measurements. */
 export function parseTurnMetrics(raw: unknown): TurnMetrics {

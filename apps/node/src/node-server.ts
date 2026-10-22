@@ -9,6 +9,14 @@ const MAX_BODY = 64 * 1024;
 
 /** Adapts Node's http module to the Web-standard `HttpApi` and the realtime host. */
 export function startNodeServer(server: Server, options: { port: number; host?: string }): Promise<{ http: HttpServer; port: number; close(): Promise<void> }> {
+  let maintenanceRun: Promise<void> | undefined;
+  const maintenance = setInterval(() => {
+    if (maintenanceRun) return;
+    maintenanceRun = server.application.sessionMaintenance.execute()
+      .catch(error => server.logger.log('error', 'session maintenance failed', { error: String(error) }))
+      .finally(() => { maintenanceRun = undefined; });
+  }, 1000);
+  maintenance.unref();
   const sockets = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const http = createHttpServer((req, res) => {
     void handleRequest(server, req, res);
@@ -19,7 +27,7 @@ export function startNodeServer(server: Server, options: { port: number; host?: 
   });
 
   return new Promise((resolve, reject) => {
-    http.once('error', reject);
+    http.once('error', error => { clearInterval(maintenance); reject(error); });
     http.listen(options.port, options.host ?? '127.0.0.1', () => {
       const address = http.address();
       const port = typeof address === 'object' && address ? address.port : options.port;
@@ -27,6 +35,8 @@ export function startNodeServer(server: Server, options: { port: number; host?: 
         http,
         port,
         close: async () => {
+          clearInterval(maintenance);
+          await maintenanceRun;
           await server.realtime.closeAll();
           for (const client of sockets.clients) client.terminate();
           await new Promise<void>((done) => http.close(() => done()));

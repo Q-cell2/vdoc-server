@@ -1,3 +1,4 @@
+import type { SessionRecord } from '@vdoc-server/application';
 import { build } from 'esbuild';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -32,7 +33,7 @@ export class TestRoom extends DocumentVoiceRoom {
   async fetch(request) {
     const url = new URL(request.url);
     if (url.searchParams.has('__quota')) return this.env.PRINCIPAL_QUOTAS.get(this.env.PRINCIPAL_QUOTAS.idFromName(url.searchParams.get('__quota'))).fetch(request);
-    if (url.searchParams.has('__inspect')) return Response.json({ snapshot: await this.ctx.storage.get('voice-session:' + url.searchParams.get('__inspect')), alarm: await this.ctx.storage.getAlarm() });
+    if (url.searchParams.has('__inspect')) { const record = await this.ctx.storage.get('voice-session:' + url.searchParams.get('__inspect')); return Response.json({ snapshot: record?.session ?? record, record, alarm: await this.ctx.storage.getAlarm() }); }
     if (url.searchParams.has('__audit')) return Response.json(this.auditEvents(url.searchParams.get('__audit')));
     if (url.searchParams.has('__seed')) { const snapshot = await request.json(); await this.ctx.storage.put('voice-session:' + snapshot.id, snapshot); await this.ctx.storage.setAlarm(Date.now()); return new Response(null, { status: 204 }); }
     return super.fetch(request);
@@ -42,9 +43,9 @@ export class TestRoom extends DocumentVoiceRoom {
 async function room(documentId: string) {
   const base = `https://voice.test/v1/documents/${documentId}/voice-sessions`;
   return {
-    inspect: async (id: string) => (await mf.dispatchFetch(`${base}?__inspect=${id}`)).json() as Promise<{ snapshot?: VoiceSessionSnapshot; alarm: number | null }>,
+    inspect: async (id: string) => (await mf.dispatchFetch(`${base}?__inspect=${id}`)).json() as Promise<{ snapshot?: VoiceSessionSnapshot; record?: SessionRecord; alarm: number | null }>,
     audit: async (id: string) => (await mf.dispatchFetch(`${base}?__audit=${id}`)).json() as Promise<AuditPage>,
-    seed: async (snapshot: VoiceSessionSnapshot) => { const response = await mf.dispatchFetch(`${base}?__seed=1`, { method: 'POST', body: JSON.stringify(snapshot) }); expect(response.status).toBe(204); },
+    seed: async (snapshot: VoiceSessionSnapshot & { pendingAuditEvents?: unknown[]; nextAuditSequence?: number }) => { const response = await mf.dispatchFetch(`${base}?__seed=1`, { method: 'POST', body: JSON.stringify(snapshot) }); expect(response.status).toBe(204); },
   };
 }
 async function grant(documentId: string) {
@@ -93,9 +94,8 @@ describe('SQLite Durable Objects in real workerd', () => {
     expect(admitted).toHaveLength(3);
     const first = admitted[0]!;
     const stored = await (await room(first.doc)).inspect(first.sessionId);
-    expect(stored.snapshot).toMatchObject({
-      principalId: principal('web', alice), clientId: 'web', userId: alice, requestId: first.requestId,
-    });
+    expect(stored.snapshot).toMatchObject({ principalId: principal('web', alice) });
+    expect(stored.record?.identity).toEqual({ clientId: 'web', userId: alice, requestId: first.requestId });
     const audit = await (await room(first.doc)).audit(first.sessionId);
     expect(audit.events).toHaveLength(1);
     expect(audit.events[0]!.event).toMatchObject({
@@ -110,9 +110,9 @@ describe('SQLite Durable Objects in real workerd', () => {
     const otherResponse = await post('user-alice-other-app', alice, otherKey);
     expect(otherResponse.response.status).toBe(201);
     const otherSession = { doc: otherResponse.doc, ...(await otherResponse.response.json() as { sessionId: string }) };
-    expect((await (await room(otherSession.doc)).inspect(otherSession.sessionId)).snapshot).toMatchObject({
-      principalId: principal('quota', alice), clientId: 'quota', userId: alice,
-    });
+    const other = await (await room(otherSession.doc)).inspect(otherSession.sessionId);
+    expect(other.snapshot).toMatchObject({ principalId: principal('quota', alice) });
+    expect(other.record?.identity).toMatchObject({ clientId: 'quota', userId: alice });
     expect(principal('quota', alice)).not.toBe(principal('web', alice));
 
     await mf.dispose();
@@ -162,15 +162,15 @@ describe('SQLite Durable Objects in real workerd', () => {
     const pending = {
       type: 'TurnCompleted', aggregateId: sessionId, occurredAt: Date.now(), turnId: 'delivered-turn', toolCalls: 0,
       eventId: `${sessionId}:event:99`, settlementId: `${sessionId}:turn:delivered-turn`, usageUnit: 'turn', usageDelta: 1,
-      principalId: snapshot.principalId, clientId: snapshot.clientId!, userId: snapshot.userId!, documentId: doc, requestId: 'outbox-create',
+      principalId: snapshot.principalId, clientId: (await stub.inspect(sessionId)).record!.identity.clientId, userId: (await stub.inspect(sessionId)).record!.identity.userId!, documentId: doc, requestId: 'outbox-create',
     };
     const unacknowledged = { ...snapshot, usage: { ...snapshot.usage, turns: 1 }, completedTurnIds: ['delivered-turn'], pendingAuditEvents: [pending], nextAuditSequence: 100 };
     await stub.seed(unacknowledged);
-    await expect.poll(async () => (await stub.inspect(sessionId)).snapshot?.pendingAuditEvents, { timeout: 5000 }).toEqual([]);
+    await expect.poll(async () => (await stub.inspect(sessionId)).record?.outbox, { timeout: 5000 }).toEqual([]);
     expect((await stub.audit(sessionId)).events.filter(row => row.event.type === 'TurnCompleted')).toHaveLength(1);
     // Simulate crash after sink commit but before acknowledgement persisted.
     await stub.seed(unacknowledged);
-    await expect.poll(async () => (await stub.inspect(sessionId)).snapshot?.pendingAuditEvents, { timeout: 5000 }).toEqual([]);
+    await expect.poll(async () => (await stub.inspect(sessionId)).record?.outbox, { timeout: 5000 }).toEqual([]);
     expect((await stub.audit(sessionId)).events.filter(row => row.event.type === 'TurnCompleted')).toHaveLength(1);
     expect((await stub.inspect(sessionId)).snapshot?.usage.turns).toBe(1);
   });

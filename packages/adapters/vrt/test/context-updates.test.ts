@@ -38,7 +38,7 @@ describe('voice session context updates', () => {
     expect(unsupported.model.session.commandsOf('update')).toEqual([]);
     queue.close(); unsupported.updates.close();
     const ended = await setup();
-    await ended.app.endVoiceSession.bySystem(ended.sessionId, 'disconnected');
+    await ended.app.handleRealtimeDisconnect.execute(ended.sessionId);
     ended.updates.schedule({ title: 'late' });
     await expect.poll(() => ended.refused.mock.calls.length).toBe(1);
     expect(ended.refused).toHaveBeenCalledWith('SESSION_CLOSED');

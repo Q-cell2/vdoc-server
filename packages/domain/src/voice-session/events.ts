@@ -31,15 +31,7 @@ export interface ToolCallCompleted extends DomainEvent<'ToolCallCompleted'> {
   readonly ok: boolean;
   readonly code?: string;
 }
-/** Optional measurements; missing latency means it was not measured, never zero. */
-export interface TurnMetrics {
-  readonly timeToFirstAudioMs?: number;
-  readonly timeToFirstToolCallMs?: number;
-  readonly interruptLatencyMs?: number;
-  /** Complete calls admitted to the SDK's current epoch, counted before policy and execution. */
-  readonly modelToolCalls?: number;
-}
-export interface TurnCompleted extends DomainEvent<'TurnCompleted'>, TurnMetrics {
+export interface TurnCompleted extends DomainEvent<'TurnCompleted'> {
   readonly turnId: string;
   readonly toolCalls: number;
 }
@@ -49,7 +41,10 @@ export interface VoiceSessionEnded extends DomainEvent<'VoiceSessionEnded'> {
   readonly usage: Usage;
 }
 
+export interface UserInputRecorded extends DomainEvent<'UserInputRecorded'> { readonly sequence: number; }
+
 export type VoiceSessionEvent =
+  | UserInputRecorded
   | VoiceSessionGranted
   | VoiceSessionGrantRenewed
   | VoiceSessionConnected

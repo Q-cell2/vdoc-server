@@ -2,7 +2,7 @@ export { createApplication, type Application, type ApplicationDependencies, type
 export { parseDocumentContext, type DocumentContext } from './context/document-context';
 export { appError, fromDomain, type AppError, type AppErrorCode } from './errors';
 export type { CallerAuthenticator, CallerCredentials, Clock, EventPublisher, GrantSigner, IdGenerator, RealtimeConnections } from './ports';
-export { AuthorizeRealtimeConnection, type AuthorizeRealtimeConnectionInput, type RealtimeIdentity } from './use-cases/authorize-realtime-connection';
+export { ConnectRealtime, type ConnectRealtimeInput, type RealtimeIdentity } from './use-cases/connect-realtime';
 export { CompleteTurn } from './use-cases/complete-turn';
 export { ConfigureRealtimeSession, type AgentSessionSettings, type ConfigureRealtimeSessionInput } from './use-cases/configure-realtime-session';
 export { EndVoiceSession, type EndVoiceSessionByClientInput } from './use-cases/end-voice-session';
@@ -13,5 +13,13 @@ export { RenewSessionGrant, type RenewSessionGrantInput } from './use-cases/rene
 export { ResolveRealtimeRoute, type RealtimeRoute } from './use-cases/resolve-realtime-route';
 export { ReviewToolCall, type ToolCallInput } from './use-cases/review-tool-call';
 export type { GrantView, VoiceSessionView } from './use-cases/views';
-export { VoiceSessionStore, QuotaUnavailable, quotaUnavailable } from './voice-session-store';
+export { VoiceSessionStore } from './voice-session-store';
+export { SessionQuotaService, quotaUnavailable, type VoiceSessionQuotaRejected } from './session-quota-service';
+export { SessionMaintenance, ExpireVoiceSession } from './session-maintenance';
+export { RelaySessionOutbox, QuotaEventHandler, DisconnectEventHandler, UsageSettlementPublisher } from './session-events';
+export { SessionLifecycle } from './session-lifecycle';
+export { RecordUserInput } from './use-cases/record-user-input';
+export { HandleRealtimeDisconnect } from './use-cases/handle-realtime-disconnect';
+export { migrateSessionRecord, nextSessionWake, type SessionRecord, type SessionRepository, type SessionRecordStorage, type SessionMaintenanceStorage, type SessionPersistence, type SessionEvent, type AuditIdentity } from './session-record';
+export { parseTurnMetrics, type TurnMetrics } from './telemetry/turn-metrics';
 export type { PrincipalQuotaStore } from './ports';
