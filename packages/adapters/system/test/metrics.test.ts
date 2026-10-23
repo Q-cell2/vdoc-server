@@ -43,3 +43,17 @@ describe('structured voice metrics', () => {
     }
   });
 });
+
+
+it('logs only allowed stop reasons and whole continuation counts, never raw provider reasons', async () => {
+  const lines: string[] = [];
+  const sink = new TurnMetricsPublisher(new JsonLogger('info', line => lines.push(line)));
+  await sink.publish([
+    event('TurnTelemetry', { stopReason: 'continuation_limit', continuations: 16, rawStopReason: 'private' }),
+    event('TurnTelemetry', { stopReason: 'private', continuations: 1.5 }),
+  ]);
+  expect(JSON.parse(lines[0]!)).toMatchObject({ stopReason: 'continuation_limit', continuations: 16 });
+  expect(JSON.parse(lines[1]!)).not.toHaveProperty('stopReason');
+  expect(JSON.parse(lines[1]!)).not.toHaveProperty('continuations');
+  expect(lines.join('')).not.toContain('private');
+});

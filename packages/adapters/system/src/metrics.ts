@@ -1,10 +1,10 @@
-import type { EventPublisher } from '@vdoc-server/application';
+import { isTurnStopReason, type EventPublisher } from '@vdoc-server/application';
 import type { DomainEvent } from '@vdoc-server/domain';
 import type { Logger } from './index';
 
 const FIELDS: Readonly<Record<string, { metric: string; strings: readonly string[]; numbers: readonly string[] }>> = {
   TurnCompleted: { metric: 'turn.completed', strings: ['turnId'], numbers: ['toolCalls'] },
-  TurnTelemetry: { metric: 'turn.telemetry', strings: ['turnId'], numbers: ['modelToolCalls', 'timeToFirstAudioMs', 'timeToFirstToolCallMs', 'interruptLatencyMs'] },
+  TurnTelemetry: { metric: 'turn.telemetry', strings: ['turnId'], numbers: ['modelToolCalls', 'continuations', 'timeToFirstAudioMs', 'timeToFirstToolCallMs', 'interruptLatencyMs'] },
   ToolCallReviewed: { metric: 'tool.reviewed', strings: ['turnId', 'callId', 'tool', 'risk', 'decision', 'code'], numbers: [] },
   ToolCallCompleted: { metric: 'tool.completed', strings: ['turnId', 'callId', 'tool', 'code'], numbers: [] },
 };
@@ -26,10 +26,11 @@ export class TurnMetricsPublisher implements EventPublisher {
       }
       for (const field of schema.numbers) {
         const value = input[field];
-        const count = field === 'toolCalls' || field === 'modelToolCalls';
+        const count = field === 'toolCalls' || field === 'modelToolCalls' || field === 'continuations';
         if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && (!count || Number.isSafeInteger(value))) fields[field] = value;
       }
       if (event.type === 'ToolCallCompleted' && typeof input.ok === 'boolean') fields.ok = input.ok;
+      if (event.type === 'TurnTelemetry' && isTurnStopReason(input.stopReason)) fields.stopReason = input.stopReason;
       this.logger.log('info', 'voice metrics', fields);
     }
   }

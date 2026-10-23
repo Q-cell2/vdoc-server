@@ -7,7 +7,7 @@ import { toMessages } from '../src/providers/claude-text';
 type Block = Record<string, unknown> & { type: string };
 
 /** A double for `client.beta.messages.stream`: streams text deltas, then resolves the final message. */
-function fakeClaude(replies: { content: Block[]; stop_reason?: string }[]) {
+function fakeClaude(replies: { content: Block[]; stop_reason?: string | null }[]) {
   const requests: Record<string, unknown>[] = [];
   const client = {
     beta: {
@@ -15,7 +15,7 @@ function fakeClaude(replies: { content: Block[]; stop_reason?: string }[]) {
         stream(params: Record<string, unknown>) {
           requests.push(structuredClone(params));
           const reply = replies.shift() ?? { content: [{ type: 'text', text: 'ok' }] };
-          const message = { content: reply.content, stop_reason: reply.stop_reason ?? 'end_turn', usage: { input_tokens: 11, output_tokens: 7 } };
+          const message = { content: reply.content, stop_reason: reply.stop_reason === undefined ? 'end_turn' : reply.stop_reason, usage: { input_tokens: 11, output_tokens: 7 } };
           return {
             async *[Symbol.asyncIterator]() {
               for (const [index, block] of reply.content.entries()) {
@@ -47,7 +47,7 @@ describe('claudeText', () => {
     expect(parts).toEqual([
       { type: 'text', delta: 'Reading.' },
       { type: 'tool-call', callId: 'toolu_1', name: 'read_document', arguments: {} },
-      { type: 'finish', usage: { inputTokens: 11, outputTokens: 7 } },
+      { type: 'finish', stopReason: 'tool_calls', rawStopReason: 'tool_use', usage: { inputTokens: 11, outputTokens: 7 } },
     ]);
     expect(requests[0]).toMatchObject({
       model: 'claude-opus-5-5', system: 'Be brief.', fallbacks: 'default',
@@ -144,4 +144,15 @@ describe('createModelRegistry', () => {
     expect(createModelRegistry({ anthropicApiKey: 'a' }).has('cascade-claude')).toBe(false);
     expect(createModelRegistry({ openaiApiKey: 'o' }).has('cascade-claude')).toBe(false);
   });
+});
+
+
+it.each([
+  ['end_turn', 'completed'], ['stop_sequence', 'completed'], ['tool_use', 'tool_calls'],
+  ['max_tokens', 'max_tokens'], ['pause_turn', 'pause'], ['refusal', 'refusal'],
+  ['future_reason', 'unknown'], [null, 'unknown'],
+])('preserves Claude stop_reason %s as %s', async (raw, normalized) => {
+  const { client } = fakeClaude([{ content: [], stop_reason: raw }]);
+  const parts = await collect(claudeText({ apiKey: 'k', client }).stream({ messages: [{ role: 'user', content: 'go' }], tools: [] }, { signal }));
+  expect(parts.at(-1)).toEqual({ type: 'finish', stopReason: normalized, ...(raw !== null ? { rawStopReason: raw } : {}), usage: { inputTokens: 11, outputTokens: 7 } });
 });

@@ -24,5 +24,15 @@
     "miniflare": "5.20261012.0-beta",
     "typescript": "5.9.3",
     "vitest": "3.2.7"
+  },
+  "overrides": {
+    "@vrealtime/core": "file:./vendor/vrt/vrealtime-core-0.2.0.tgz",
+    "@vrealtime/cascade": "file:./vendor/vrt/vrealtime-cascade-0.2.0.tgz",
+    "@vrealtime/openai-compatible": "file:./vendor/vrt/vrealtime-openai-compatible-0.2.0.tgz"
+  },
+  "dependencies": {
+    "@vrealtime/core": "file:./vendor/vrt/vrealtime-core-0.2.0.tgz",
+    "@vrealtime/cascade": "file:./vendor/vrt/vrealtime-cascade-0.2.0.tgz",
+    "@vrealtime/openai-compatible": "file:./vendor/vrt/vrealtime-openai-compatible-0.2.0.tgz"
   }
 }
