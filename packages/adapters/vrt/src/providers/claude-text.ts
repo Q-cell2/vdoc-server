@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ChatMessage, TextModel, TextPart, TextRequest } from '@vrealtime/cascade';
+import type { StopReason } from '@vrealtime/core';
 
 type ContentBlock = Anthropic.Beta.BetaContentBlock;
 type ContentBlockParam = Anthropic.Beta.BetaContentBlockParam;
@@ -12,6 +13,17 @@ const DEFAULT_FALLBACK_MODELS = new Set(['claude-fable-5-1', 'claude-opus-5-5', 
 /** Assistant turns whose exact content is kept for replay; older turns fall back to text and tool calls. */
 const MAX_REMEMBERED_TURNS = 256;
 const REFUSAL_REPLY = 'Sorry, I can’t help with that.';
+
+function claudeStopReason(reason: string | null): StopReason {
+  switch (reason) {
+    case 'end_turn': case 'stop_sequence': return 'completed';
+    case 'tool_use': return 'tool_calls';
+    case 'max_tokens': return 'max_tokens';
+    case 'pause_turn': return 'pause';
+    case 'refusal': return 'refusal';
+    default: return 'unknown';
+  }
+}
 
 export interface ClaudeTextOptions {
   readonly apiKey: string;
@@ -69,7 +81,7 @@ export function claudeText(options: ClaudeTextOptions): TextModel {
         if (block.type === 'tool_use') yield { type: 'tool-call', callId: block.id, name: block.name, arguments: block.input };
       }
       remember(remembered, content);
-      yield { type: 'finish', usage: { inputTokens: message.usage.input_tokens, outputTokens: message.usage.output_tokens } };
+      yield { type: 'finish', stopReason: claudeStopReason(message.stop_reason), ...(message.stop_reason !== null && /^[A-Za-z0-9_.:-]{1,80}$/.test(message.stop_reason) ? { rawStopReason: message.stop_reason } : {}), usage: { inputTokens: message.usage.input_tokens, outputTokens: message.usage.output_tokens } };
     },
   };
 }

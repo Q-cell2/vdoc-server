@@ -20,4 +20,4 @@ export { SessionLifecycle } from './session-lifecycle';
 export { RecordUserInput } from './use-cases/record-user-input';
 export { HandleRealtimeDisconnect } from './use-cases/handle-realtime-disconnect';
 export { migrateSessionRecord, nextSessionWake, type SessionRecord, type SessionRepository, type SessionRecordStorage, type SessionMaintenanceStorage, type SessionPersistence, type SessionEvent, type AuditIdentity } from './session-record';
-export { parseTurnMetrics, type TurnMetrics } from './telemetry/turn-metrics';
+export { isTurnStopReason, parseTurnMetrics, type TurnMetrics, type TurnStopReason } from './telemetry/turn-metrics';
