@@ -171,6 +171,7 @@ export class RealtimeHost implements RealtimeConnections {
       model,
       instructions: '',
       clientTools: 'accept',
+      maxContinuations: 16,
       clientToolTimeoutMs: this.options.clientToolTimeoutMs ?? 15_000,
       hooks: {
         beforeToolCall: async (call) => {
