@@ -67,6 +67,16 @@ describe('editing assistant profile', () => {
     expect(profile.instructionsFor({ language: 'zh-CN', documentTitle: 'Q3 "plan"' })).toContain(`titled "Q3 'plan'"`);
   });
 
+  it('tells the agent to speak before calling tools, without claiming the edit or pre-empting a confirmation', () => {
+    const config = loadConfig({});
+    if (!config.ok) throw new Error();
+    const instructions = editingAssistantProfile({ provider: 'boson' }, config.value.limits).instructionsFor({ language: 'zh-CN', documentTitle: 'Notes' });
+    expect(instructions).toContain('Speak first, then act.');
+    expect(instructions).toContain('call the tools in the same response without waiting for the user');
+    expect(instructions).toContain('must never claim the edit is done');
+    expect(instructions).toContain('may need the user\'s confirmation first');
+  });
+
   it('lists exactly the tools vdoc declares, each with a risk level', () => {
     // vdoc's catalog: lib/usecases/document-tools.ts in Q-cell2/vdoc.
     expect([...VDOC_TOOLS].sort()).toEqual(['apply_document_operations', 'get_context', 'read_blocks', 'read_document', 'undo_turn']);
