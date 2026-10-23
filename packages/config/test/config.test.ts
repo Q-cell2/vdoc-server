@@ -79,7 +79,7 @@ describe('editing assistant profile', () => {
 
   it('lists exactly the tools vdoc declares, each with a risk level', () => {
     // vdoc's catalog: lib/usecases/document-tools.ts in Q-cell2/vdoc.
-    expect([...VDOC_TOOLS].sort()).toEqual(['apply_document_operations', 'get_context', 'read_blocks', 'read_document', 'undo_turn']);
+    expect([...VDOC_TOOLS].sort()).toEqual(['apply_document_operations', 'get_context', 'insert_structured_article', 'read_blocks', 'read_document', 'undo_turn']);
     expect(Object.keys(VDOC_RISK_TABLE.tools).sort()).toEqual([...VDOC_TOOLS].sort());
   });
 });

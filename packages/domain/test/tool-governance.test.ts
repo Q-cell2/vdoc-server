@@ -18,6 +18,7 @@ describe('RiskAssessor', () => {
     expect(assessor.assess(call('apply_document_operations', ops('something.new'))).risk).toBe('high');
     expect(assessor.assess(call('apply_document_operations', { operations: [{ action: 'deleteTable' }] })).risk).toBe('high');
     expect(assessor.assess(call('apply_document_operations', ops('block.insert'))).risk).toBe('low');
+    expect(assessor.assess(call('insert_structured_article', { blocks: Array(80).fill({ kind: 'paragraph', text: 'body' }) })).risk).toBe('low');
     expect(assessor.assess(call('mystery', {})).risk).toBe('medium');
     expect(assessor.assess(call('apply_document_operations', ops(...Array(25).fill('text.style')))).risk).toBe('high');
   });
