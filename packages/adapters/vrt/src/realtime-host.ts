@@ -185,7 +185,7 @@ export class RealtimeHost implements RealtimeConnections {
           }).catch((error: unknown) => this.#log('error', 'recording a tool result failed', { sessionId, error: String(error) }));
         },
         onTurnEnd: (turn, metrics) => {
-          const telemetry = { type: 'TurnTelemetry', aggregateId: sessionId, occurredAt: Date.now(), turnId: turn.id, ...parseTurnMetrics(metrics) };
+          const telemetry = { type: 'TurnTelemetry', aggregateId: sessionId, occurredAt: Date.now(), turnId: turn.id, interrupted: turn.interrupted, ...parseTurnMetrics(metrics) };
           void this.options.telemetry?.publish([telemetry])
             .catch((error: unknown) => this.#log('error', 'publishing turn telemetry failed', { sessionId, error: String(error) }));
           void handlers.completeTurn.execute({ sessionId, turnId: turn.id })

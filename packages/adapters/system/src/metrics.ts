@@ -30,6 +30,7 @@ export class TurnMetricsPublisher implements EventPublisher {
         if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && (!count || Number.isSafeInteger(value))) fields[field] = value;
       }
       if (event.type === 'ToolCallCompleted' && typeof input.ok === 'boolean') fields.ok = input.ok;
+      if (event.type === 'TurnTelemetry' && typeof input.interrupted === 'boolean') fields.interrupted = input.interrupted;
       this.logger.log('info', 'voice metrics', fields);
     }
   }

@@ -67,14 +67,15 @@ describe('editing assistant profile', () => {
     expect(profile.instructionsFor({ language: 'zh-CN', documentTitle: 'Q3 "plan"' })).toContain(`titled "Q3 'plan'"`);
   });
 
-  it('tells the agent to speak before calling tools, without claiming the edit or pre-empting a confirmation', () => {
+  it('prioritizes executing an edit over spoken acknowledgements while preserving confirmation', () => {
     const config = loadConfig({});
     if (!config.ok) throw new Error();
     const instructions = editingAssistantProfile({ provider: 'boson' }, config.value.limits).instructionsFor({ language: 'zh-CN', documentTitle: 'Notes' });
-    expect(instructions).toContain('Speak first, then act.');
-    expect(instructions).toContain('call the tools in the same response without waiting for the user');
-    expect(instructions).toContain('must never claim the edit is done');
-    expect(instructions).toContain('may need the user\'s confirmation first');
+    expect(instructions).toContain('Do not echo the user\'s request');
+    expect(instructions).toContain('A spoken acknowledgement is optional');
+    expect(instructions).toContain('Reading alone does not complete an editing request');
+    expect(instructions).toContain('this does not limit the content');
+    expect(instructions).toContain('Only if they clearly agree, make exactly the same call again');
   });
 
   it('lists exactly the tools vdoc declares, each with a risk level', () => {

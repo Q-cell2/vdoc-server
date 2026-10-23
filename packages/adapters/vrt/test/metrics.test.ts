@@ -14,7 +14,7 @@ it('forwards SDK turn measurements through its independent telemetry port and dr
       toolCalls: 2, timeToFirstAudioMs: 42, timeToFirstToolCallMs: 18, interruptLatencyMs: 3,
     });
     await expect.poll(() => h.events.events.find((event) => event.type === 'TurnTelemetry')).toMatchObject({
-      aggregateId: sessionId, turnId: 't-metrics', modelToolCalls: 2, timeToFirstAudioMs: 42, timeToFirstToolCallMs: 18, interruptLatencyMs: 3,
+      aggregateId: sessionId, turnId: 't-metrics', interrupted: true, modelToolCalls: 2, timeToFirstAudioMs: 42, timeToFirstToolCallMs: 18, interruptLatencyMs: 3,
     });
     await expect.poll(() => h.events.events.find(event => event.type === 'TurnCompleted')).toMatchObject({ turnId: 't-metrics' });
     expect(h.events.events.find(event => event.type === 'TurnCompleted')).not.toHaveProperty('modelToolCalls');

@@ -11,7 +11,7 @@ import { startNodeServer } from '../src/node-server';
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
-async function setup(run: ClientTool['run']) {
+async function setup(run: ClientTool['run'], tools: Record<string, ClientTool> = { read_document: { parameters: { type: 'object' }, run } }) {
   const key = 'sdk-lifecycle-client-key-at-least-24-characters';
   const config = loadConfig({ VDOC_SERVER_ENV: 'test', VDOC_SERVER_CLIENTS: `web:${key}`, VDOC_SERVER_MODEL: 'fake', VDOC_SERVER_LOG_LEVEL: 'error' });
   if (!config.ok) throw new Error(config.errors.join('; '));
@@ -19,7 +19,7 @@ async function setup(run: ClientTool['run']) {
   const events = new RecordingEventPublisher();
   const server = await createNodeServer(config.value, {
     models: new ModelRegistry().register({ id: 'fake', create: () => model }),
-    subscribers: [events], realtime: { resumeWindowMs: 5000 },
+    subscribers: [events], telemetrySubscribers: [events], realtime: { resumeWindowMs: 5000 },
   });
   const running = await startNodeServer(server, { port: 0 });
   cleanups.push(running.close);
@@ -42,7 +42,7 @@ async function setup(run: ClientTool['run']) {
   const client: ClientSession = await connect(`ws://127.0.0.1:${running.port}${created.realtimePath}`, {
     auth, WebSocket: ObservedSocket, reconnect: { baseDelayMs: 10, maxDelayMs: 20, maxAttempts: 2 },
     context: { documentId: 'sdk-document', language: 'zh-CN' },
-    tools: { read_document: { parameters: { type: 'object' }, run } },
+    tools,
   });
   cleanups.push(() => client.close());
   let turn = 0;
@@ -57,6 +57,88 @@ async function setup(run: ClientTool['run']) {
   }
   return { model, events, client, sockets, auth, created, startTurn };
 }
+
+it('injects client tool schemas and completes a voice read/write chain without another user message', async () => {
+  const writes: unknown[] = [];
+  const read = vi.fn(() => ({ sessionId: 'editor-1', revision: 0, blocks: [{ id: 'p1', text: '' }] }));
+  const write = vi.fn((args: unknown) => { writes.push(args); return { ok: true, revision: 1 }; });
+  const tools: Record<string, ClientTool> = {
+    read_document: { description: 'Read the document.', parameters: { type: 'object', properties: {} }, run: read },
+    apply_document_operations: {
+      description: 'Apply document operations.',
+      parameters: { type: 'object', properties: { expectedSessionId: { type: 'string' }, expectedRevision: { type: 'integer' }, operations: { type: 'array' } } },
+      run: write,
+    },
+  };
+  const h = await setup(read, tools);
+  expect(h.model.session.config.instructions).toContain('You are the voice editing assistant');
+  expect(h.model.session.config.tools).toEqual(Object.entries(tools).map(([name, tool]) => ({ name, description: tool.description, parameters: tool.parameters })));
+  // Provider VAD + transcription, as in Boson; no client.sendText replay.
+  h.model.session.emit({ type: 'input.speech.start', atMs: 0 });
+  h.model.session.emit({ type: 'input.speech.end', atMs: 100 });
+  h.model.session.emit({ type: 'input.transcript', itemId: 'voice-user', text: '写一句你好', final: true });
+  h.model.session.emit({ type: 'response.start', responseId: 'voice-read' });
+  h.model.session.emit({ type: 'output.transcript', responseId: 'voice-read', itemId: 'ack', delta: '好的。' });
+  h.model.session.emit({ type: 'tool.call', responseId: 'voice-read', callId: 'read', name: 'read_document', arguments: {} });
+  h.model.session.emit({ type: 'response.end', responseId: 'voice-read', status: 'done' });
+  await expect.poll(() => h.model.session.commandsOf('respond').length).toBe(1);
+  expect(read).toHaveBeenCalledTimes(1);
+  const args = { expectedSessionId: 'editor-1', expectedRevision: 0, target: { kind: 'text', blockId: 'p1', start: 0, end: 0 }, operations: [{ type: 'text.insert', text: '你好' }] };
+  h.model.session.emit({ type: 'response.start', responseId: 'voice-write' });
+  h.model.session.emit({ type: 'tool.call', responseId: 'voice-write', callId: 'write', name: 'apply_document_operations', arguments: args });
+  h.model.session.emit({ type: 'response.end', responseId: 'voice-write', status: 'done' });
+  await expect.poll(() => h.model.session.commandsOf('respond').length).toBe(2);
+  expect(writes).toEqual([args]);
+  h.model.session.emit({ type: 'response.start', responseId: 'voice-done' });
+  h.model.session.emit({ type: 'output.transcript', responseId: 'voice-done', itemId: 'done', delta: '已写入。' });
+  h.model.session.emit({ type: 'response.end', responseId: 'voice-done', status: 'done' });
+  await expect.poll(() => h.events.events.filter(event => event.type === 'TurnTelemetry').length).toBe(1);
+  expect(h.events.events.find(event => event.type === 'TurnTelemetry')).toMatchObject({ modelToolCalls: 2, interrupted: false });
+  expect(h.model.session.commandsOf('sendText')).toHaveLength(0);
+  expect(h.model.session.commandsOf('respond')).toHaveLength(2);
+});
+
+it('ends a speech-only acknowledgement without executing or automatically replaying the request', async () => {
+  const run = vi.fn(() => ({}));
+  const h = await setup(run);
+  h.model.session.emit({ type: 'input.speech.start', atMs: 0 });
+  h.model.session.emit({ type: 'input.speech.end', atMs: 100 });
+  h.model.session.emit({ type: 'input.transcript', itemId: 'voice-user', text: '帮我写一段', final: true });
+  h.model.session.emit({ type: 'response.start', responseId: 'ack-only' });
+  h.model.session.emit({ type: 'output.transcript', responseId: 'ack-only', itemId: 'ack', delta: '好的，我来写。' });
+  h.model.session.emit({ type: 'response.end', responseId: 'ack-only', status: 'done' });
+  await expect.poll(() => h.events.events.filter(event => event.type === 'TurnTelemetry').length).toBe(1);
+  expect(h.events.events.find(event => event.type === 'TurnTelemetry')).toMatchObject({ modelToolCalls: 0, interrupted: false });
+  expect(run).not.toHaveBeenCalled();
+  expect(h.model.session.commandsOf('respond')).toHaveLength(0);
+  expect(h.model.session.commandsOf('sendText')).toHaveLength(0);
+});
+
+it('reports a voice interruption separately and cancels a pending write before it commits', async () => {
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const commit = vi.fn();
+  const run = vi.fn<ClientTool['run']>(async (_args, context) => {
+    await pending;
+    context.signal.throwIfAborted();
+    commit();
+    return { ok: true };
+  });
+  const h = await setup(run, { apply_document_operations: { parameters: { type: 'object' }, run } });
+  const responseId = await h.startTurn();
+  h.model.session.emit({ type: 'tool.call', responseId, callId: 'pending-write', name: 'apply_document_operations', arguments: { operations: [{ type: 'text.insert', text: 'hello' }] } });
+  await expect.poll(() => run.mock.calls.length).toBe(1);
+  try {
+    // Real barge-in and speaker echo both reach this event; do not guess which.
+    h.model.session.emit({ type: 'input.speech.start', atMs: 200 });
+    await expect.poll(() => run.mock.calls[0]![1].signal.aborted).toBe(true);
+    await expect.poll(() => h.events.events.find(event => event.type === 'TurnTelemetry')).toMatchObject({ interrupted: true, modelToolCalls: 1 });
+    release();
+    await pending;
+    await Promise.resolve();
+    expect(commit).not.toHaveBeenCalled();
+  } finally { release(); }
+});
 
 it('negotiates 0.2 capabilities and separates reused provider tool IDs across responses', async () => {
   const run = vi.fn<ClientTool['run']>(() => ({ text: '中文文档' }));

@@ -42,4 +42,21 @@ describe('structured voice metrics', () => {
       expect(point).not.toHaveProperty('interruptLatencyMs');
     }
   });
+
+  it('retains only boolean interruption flags on turn telemetry', async () => {
+    const lines: string[] = [];
+    const sink = new TurnMetricsPublisher(new JsonLogger('info', line => lines.push(line)));
+    await sink.publish([
+      event('TurnTelemetry', { interrupted: true }),
+      event('TurnTelemetry', { interrupted: false }),
+      event('TurnTelemetry', { interrupted: 'private transcript' }),
+      event('TurnCompleted', { interrupted: true }),
+    ]);
+    const points = lines.map(line => JSON.parse(line) as Record<string, unknown>);
+    expect(points[0]).toHaveProperty('interrupted', true);
+    expect(points[1]).toHaveProperty('interrupted', false);
+    expect(points[2]).not.toHaveProperty('interrupted');
+    expect(points[3]).not.toHaveProperty('interrupted');
+    expect(lines.join('')).not.toContain('private transcript');
+  });
 });
