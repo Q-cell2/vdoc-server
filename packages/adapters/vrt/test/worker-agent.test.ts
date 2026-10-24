@@ -639,6 +639,28 @@ it('labels voice-only failure after a successful write and never replays that wr
   expect(writes).toBe(1); expect(runs).toBe(1); expect(responses).toBe(2);
 });
 
+it('treats the user talking over the spoken summary as an interruption, not a failure', async () => {
+  let speaking = false; let responses = 0;
+  const actor = fakeModel({ onCommand(command, session) {
+    if (command.type === 'submitToolResult') speaking = true;
+    if (command.type !== 'respond') return;
+    const isVoice = speaking; const responseId = `summary-${++responses}`;
+    queueMicrotask(() => {
+      session.emit({ type: 'response.start', responseId });
+      if (!isVoice) session.emit({ type: 'tool.call', responseId, callId: 'delegate', name: DELEGATE_TOOL, arguments: { request: '任务' } });
+      session.emit({ type: 'response.end', responseId, status: isVoice ? 'cancelled' : 'done', stopReason: isVoice ? 'cancelled' : 'tool_calls' });
+    });
+  } });
+  const worker: WorkerRunner = { async run(_request, context) { context.emit({ type: 'start' }); context.emit({ type: 'text', delta: '文章已写入' }); return '文章已写入'; } };
+  const ended = vi.fn();
+  const session = await startSession({ model: delegatedModel(actor, worker), instructions: '', clientTools: 'accept', hooks: { onTurnEnd: ended } }, { clientTools: tools });
+  cleanup.push(() => session.close());
+  const errors: string[] = []; session.on('error', event => errors.push(event.error.message));
+  session.sendText('任务');
+  await expect.poll(() => ended.mock.calls.length).toBe(1);
+  expect(errors).toEqual([]);
+});
+
 it('names a tool call made during the spoken reply as the reason the reply failed', async () => {
   let speaking = false; let responses = 0;
   const actor = fakeModel({ onCommand(command, session) {
