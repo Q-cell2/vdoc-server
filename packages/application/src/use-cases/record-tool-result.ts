@@ -1,7 +1,5 @@
-import type { SessionLifecycle } from '../session-lifecycle';
-import { ToolCallId, TurnId, VoiceSessionId } from '@vdoc-server/domain';
-import type { Clock } from '../ports';
-import type { VoiceSessionStore } from '../voice-session-store';
+import { ToolCallId, TurnId } from '@vdoc-server/domain';
+import { updateSession, type SessionCommandDeps } from './session-command';
 
 export interface RecordToolResultInput {
   readonly sessionId: string;
@@ -14,17 +12,14 @@ export interface RecordToolResultInput {
 
 /** Command: the app finished (or refused) a tool call; keep the audit trail complete. */
 export class RecordToolResult {
-  constructor(private readonly deps: { store: VoiceSessionStore; lifecycle: SessionLifecycle; clock: Clock }) {}
+  constructor(private readonly deps: SessionCommandDeps) {}
 
   async execute(input: RecordToolResultInput): Promise<void> {
-    const id = VoiceSessionId.parse(input.sessionId);
     const callId = ToolCallId.parse(input.callId);
     const turnId = TurnId.parse(input.turnId);
-    if (!id.ok || !callId.ok || !turnId.ok) return;
-    const session = await this.deps.store.findById(id.value);
-    if (!session) return;
-    session.recordToolResult({ id: callId.value, name: input.name, turnId: turnId.value }, { ok: input.ok, ...(input.code !== undefined ? { code: input.code } : {}) }, this.deps.clock.now());
-    const committed = await this.deps.lifecycle.persistAndDispatch(session);
-    if (!committed.ok) throw new Error(committed.error.message);
+    if (!callId.ok || !turnId.ok) return;
+    const call = { id: callId.value, name: input.name, turnId: turnId.value };
+    const outcome = { ok: input.ok, ...(input.code !== undefined ? { code: input.code } : {}) };
+    await updateSession(this.deps, input.sessionId, (session, now) => session.recordToolResult(call, outcome, now));
   }
 }
