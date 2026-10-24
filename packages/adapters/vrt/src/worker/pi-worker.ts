@@ -19,6 +19,8 @@ export interface WorkerContext {
   signal: AbortSignal;
   emit(event: WorkerEvent): void;
   execute(callId: string, name: string, args: unknown): Promise<unknown>;
+  /** Delivers what the user says while this task runs; the worker reads it before its next model request. */
+  onSteer?(listener: (message: string) => void): () => void;
 }
 export interface WorkerRunner {
   run(request: WorkerRequest, context: WorkerContext): Promise<string>;
@@ -98,6 +100,7 @@ export function createPiWorker(options: PiWorkerOptions): WorkerRunner {
           }
         }
       });
+      const offSteer = context.onSteer?.(message => agent.steer({ role: 'user', content: [{ type: 'text', text: message }], timestamp: Date.now() }));
       const abort = () => agent.abort();
       context.signal.addEventListener('abort', abort, { once: true });
       try {
@@ -107,6 +110,7 @@ export function createPiWorker(options: PiWorkerOptions): WorkerRunner {
         return finalText;
       } finally {
         context.signal.removeEventListener('abort', abort);
+        offSteer?.();
         unsubscribe();
       }
     },

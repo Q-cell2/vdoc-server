@@ -6,6 +6,7 @@ import { fakeProvider, type FakeResponder } from './providers/fake';
 import { openaiProvider } from './providers/openai';
 import { delegatedModel } from './worker/delegated-model';
 import { createPiWorker } from './worker/pi-worker';
+import { createUtteranceJudge } from './worker/utterance-judge';
 
 export interface ModelRegistryOptions {
   readonly bosonApiKey?: string | undefined;
@@ -27,7 +28,8 @@ export function createModelRegistry(options: ModelRegistryOptions): ModelRegistr
     const performer = bosonProvider({ apiKey: options.bosonApiKey, ...(options.bosonSocket ? { socket: options.bosonSocket } : {}) });
     // Validate the configured worker model before admitting any realtime session.
     const worker = createPiWorker({ apiKey: options.anthropicApiKey, ...(options.workerAgent ? { model: options.workerAgent.model, maxRequests: options.workerAgent.maxRequests } : {}) });
-    registry.register({ id: 'boson-worker', create: choice => delegatedModel(performer.create(choice), worker, options.workerAgent?.timeoutMs) });
+    const judge = createUtteranceJudge({ apiKey: options.anthropicApiKey });
+    registry.register({ id: 'boson-worker', create: choice => delegatedModel(performer.create(choice), worker, options.workerAgent?.timeoutMs, undefined, judge) });
   }
   if (options.openaiApiKey) registry.register(openaiProvider({ apiKey: options.openaiApiKey }));
   if (options.anthropicApiKey && options.openaiApiKey) registry.register(cascadeClaudeProvider({ anthropicApiKey: options.anthropicApiKey, openaiApiKey: options.openaiApiKey }));
