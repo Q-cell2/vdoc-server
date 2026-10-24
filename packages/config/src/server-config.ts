@@ -13,6 +13,8 @@ export interface ServerConfig {
   /** Browser origins allowed to call the HTTP API. Empty means no CORS headers. */
   readonly allowedOrigins: readonly string[];
   readonly model: ModelChoice;
+  /** The Claude model behind the worker-speaker profile, which runs only with `providerKeys.anthropic`. */
+  readonly workerModel?: string;
   readonly providerKeys: { readonly boson?: string; readonly openai?: string; readonly anthropic?: string };
   readonly concurrency: ConcurrencyStrategy;
   readonly limits: SessionLimits;
@@ -79,6 +81,8 @@ export function loadConfig(env: Env): { ok: true; value: ServerConfig } | { ok: 
   if (provider === 'cascade-claude' && !providerKeys.anthropic) errors.push('ANTHROPIC_API_KEY is required for the cascade-claude model.');
   if (provider === 'cascade-claude' && !providerKeys.openai) errors.push('OPENAI_API_KEY is required for the cascade-claude model (speech recognition and synthesis).');
   const model: ModelChoice = { provider: provider ?? 'fake', ...(modelName ? { model: modelName } : {}) };
+  const workerModel = env.VDOC_SERVER_WORKER_MODEL;
+  if (workerModel !== undefined && !/^claude-[a-z0-9.-]+$/.test(workerModel)) errors.push('VDOC_SERVER_WORKER_MODEL must be a Claude model id (for example claude-opus-5-5).');
 
   const concurrency = env.VDOC_SERVER_CONCURRENCY ?? 'supersede';
   if (concurrency !== 'supersede' && concurrency !== 'reject') errors.push('VDOC_SERVER_CONCURRENCY must be "supersede" or "reject".');
@@ -98,7 +102,7 @@ export function loadConfig(env: Env): { ok: true; value: ServerConfig } | { ok: 
   return {
     ok: true,
     value: {
-      environment, allowClientOnly, logLevel: logLevel as ServerConfig['logLevel'], signingKeys, clients, allowedOrigins, model, providerKeys,
+      environment, allowClientOnly, logLevel: logLevel as ServerConfig['logLevel'], signingKeys, clients, allowedOrigins, model, ...(workerModel ? { workerModel } : {}), providerKeys,
       concurrency: concurrency as ConcurrencyStrategy, limits: limits.value, generated,
     },
   };

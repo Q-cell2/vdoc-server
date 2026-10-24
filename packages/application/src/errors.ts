@@ -25,6 +25,7 @@ const FROM_DOMAIN: Record<string, AppErrorCode> = {
   GRANT_SCOPE_MISMATCH: 'GRANT_INVALID',
   SESSION_CLOSED: 'SESSION_CLOSED',
   DOCUMENT_BUSY: 'DOCUMENT_BUSY',
+  DELEGATION_UNKNOWN: 'FORBIDDEN',
 };
 
 /** Anti-corruption at the layer boundary: callers never see domain codes they cannot map. */

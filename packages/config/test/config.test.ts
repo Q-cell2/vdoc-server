@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { VDOC_RISK_TABLE } from '@vdoc-server/domain';
-import { VDOC_TOOLS, editingAssistantProfile, loadConfig } from '../src';
+import { ASK_ASSISTANT, VDOC_TOOLS, WORKER_INSTRUCTIONS, editingAssistantProfile, loadConfig, webSearchAssistantProfile, workerSpeakerProfile } from '../src';
 
 const KEY = 'k'.repeat(40);
 
@@ -46,6 +46,11 @@ describe('loadConfig', () => {
     if (!config.ok) expect(config.errors.join('\n')).toMatch(/OPENAI_API_KEY[\s\S]*MAX_TURNS/);
   });
 
+  it('takes an optional Claude model for the worker', () => {
+    expect(loadConfig({ VDOC_SERVER_WORKER_MODEL: 'claude-sonnet-5-5' })).toMatchObject({ ok: true, value: { workerModel: 'claude-sonnet-5-5' } });
+    expect(loadConfig({ VDOC_SERVER_WORKER_MODEL: 'gpt-5' }).ok).toBe(false);
+  });
+
   it('runs cascade-claude only with both the Anthropic key and the OpenAI speech key', () => {
     const missing = loadConfig({ VDOC_SERVER_MODEL: 'cascade-claude' });
     expect(missing.ok).toBe(false);
@@ -81,5 +86,31 @@ describe('editing assistant profile', () => {
     // vdoc's catalog: lib/usecases/document-tools.ts in Q-cell2/vdoc.
     expect([...VDOC_TOOLS].sort()).toEqual(['apply_document_operations', 'get_context', 'insert_structured_article', 'read_blocks', 'read_document', 'undo_turn']);
     expect(Object.keys(VDOC_RISK_TABLE.tools).sort()).toEqual([...VDOC_TOOLS].sort());
+  });
+});
+
+describe('reasoning effort profiles', () => {
+  const limits = (() => { const config = loadConfig({}); if (!config.ok) throw new Error(); return config.value.limits; })();
+
+  it('low effort: the same editing agent, told to search, with its provider’s web search on', () => {
+    const profile = webSearchAssistantProfile({ provider: 'boson', model: 'higgs' }, limits);
+    expect(profile.id).toBe('editing-assistant-web-search');
+    expect(profile.model).toEqual({ provider: 'boson', model: 'higgs', webSearch: true });
+    expect([...profile.allowedTools].sort()).toEqual([...VDOC_TOOLS].sort());
+    const instructions = profile.instructionsFor({ language: 'zh-CN', documentTitle: 'Notes' });
+    expect(instructions).toContain('search the web, even for things you think you know');
+    expect(instructions).toContain('Speak first, then act.');
+  });
+
+  it('high effort: the speaker only hands off, waits long enough, and the worker edits under the same rules', () => {
+    const profile = workerSpeakerProfile({ provider: 'boson' }, limits);
+    expect(profile).toMatchObject({ id: 'worker-speaker', handOffTool: ASK_ASSISTANT, clientToolTimeoutMs: 180_000 });
+    expect(profile.allowedTools.has(ASK_ASSISTANT) && VDOC_TOOLS.every((tool) => profile.allowedTools.has(tool))).toBe(true);
+    const instructions = profile.instructionsFor({ language: 'zh-CN', documentTitle: 'Notes' });
+    expect(instructions).toContain(`call ${ASK_ASSISTANT} with the user's request`);
+    expect(instructions).toContain('titled "Notes"');
+    expect(WORKER_INSTRUCTIONS).toContain('Read before you edit');
+    expect(WORKER_INSTRUCTIONS).toContain('Search the web before writing any facts');
+    expect(WORKER_INSTRUCTIONS).not.toContain('{{');
   });
 });

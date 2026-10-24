@@ -85,14 +85,14 @@ export function testProfile(limits: Partial<SessionLimits> = {}): AgentProfile {
   });
 }
 
-export function harness(options: { limits?: Partial<SessionLimits>; signer?: GrantSigner; concurrency?: 'supersede' | 'reject'; runCommand?: CommandRunner } = {}) {
+export function harness(options: { limits?: Partial<SessionLimits>; profile?: AgentProfile; signer?: GrantSigner; concurrency?: 'supersede' | 'reject'; runCommand?: CommandRunner } = {}) {
   const clock = new FakeClock();
   const repository = new MapRepository();
   const events = new EventLog();
   const connections = new Connections();
   const app = createApplication({
     ...(options.runCommand ? { runCommand: options.runCommand } : {}),
-    sessions: repository, profiles: new Profiles(testProfile(options.limits)), authenticator: new FakeAuthenticator(), signer: options.signer ?? new FakeSigner(),
+    sessions: repository, profiles: new Profiles(options.profile ?? testProfile(options.limits)), authenticator: new FakeAuthenticator(), signer: options.signer ?? new FakeSigner(),
     clock, ids: new SequentialIds(), events, connections, admission: new DocumentSessionPolicy(options.concurrency ?? 'supersede'),
     toolPolicy: defaultToolPolicy(), riskAssessor: new RiskAssessor(),
   });

@@ -1,8 +1,9 @@
-import { type Application } from '@vdoc-server/application';
+import { type Application, type DelegatedTaskRunner } from '@vdoc-server/application';
 import { CorsPolicy } from './cors';
 import { isWebSocketUpgrade, matchRealtimeRoute } from './realtime-route';
 import { json, problem } from './responses';
 import { Router } from './router';
+import { TaskController } from './task-controller';
 import { VoiceSessionController } from './voice-session-controller';
 
 export interface HttpLogger {
@@ -13,6 +14,8 @@ export interface HttpApiOptions {
   readonly app: Pick<Application, 'grantVoiceSession' | 'getVoiceSession' | 'renewSessionGrant' | 'endVoiceSession'>;
   readonly allowedOrigins: readonly string[];
   readonly logger?: HttpLogger;
+  /** Worker tasks of the worker-speaker profile; without it the task routes do not exist. */
+  readonly tasks?: DelegatedTaskRunner;
 }
 
 /**
@@ -33,6 +36,12 @@ export class HttpApi {
       .on('GET', '/v1/documents/:documentId/voice-sessions/:sessionId', sessions.get)
       .on('DELETE', '/v1/documents/:documentId/voice-sessions/:sessionId', sessions.end)
       .on('POST', '/v1/documents/:documentId/voice-sessions/:sessionId/grants', sessions.renewGrant);
+    if (options.tasks) {
+      const tasks = new TaskController(options.tasks);
+      this.#router
+        .on('POST', '/v1/documents/:documentId/voice-sessions/:sessionId/tasks', tasks.start)
+        .on('POST', '/v1/documents/:documentId/voice-sessions/:sessionId/tasks/:taskId/results', tasks.submit);
+    }
   }
 
   async handle(request: Request): Promise<Response> {

@@ -73,6 +73,26 @@ describe('HttpApi', () => {
     expect((await http.handle(request('OPTIONS', '/v1/documents/d/voice-sessions', { headers: { origin: 'https://app.vdoc.test' } }))).status).toBe(204);
     expect((await http.handle(request('OPTIONS', '/v1/documents/d/voice-sessions', { headers: { origin: 'https://evil.test' } }))).status).toBe(403);
   });
+
+  it('runs worker tasks only when the server has a worker, with large bodies and validated results', async () => {
+    const step = { ok: true, value: { taskId: 'task_1', status: 'done', reply: 'Added.' } } as const;
+    const tasks = { start: vi.fn(async () => step), submit: vi.fn(async () => step) };
+    const http = new HttpApi({ app: api().app, allowedOrigins: [], tasks });
+    const json = (body: unknown) => ({ headers: { authorization: 'Bearer abc', 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const tools = [{ name: 'read_document', description: 'x'.repeat(10_000), parameters: { type: 'object' } }];
+
+    const started = await http.handle(request('POST', '/v1/documents/d/voice-sessions/s/tasks', json({ callId: 'call_1', arguments: { request: 'r' }, tools })));
+    expect([started.status, await started.json()]).toEqual([200, step.value]);
+    expect(tasks.start).toHaveBeenCalledWith({ credentials: expect.objectContaining({ bearer: 'abc' }), documentId: 'd', sessionId: 's', callId: 'call_1', arguments: { request: 'r' }, tools });
+    expect((await http.handle(request('POST', '/v1/documents/d/voice-sessions/s/tasks', json({ arguments: {}, tools })))).status).toBe(400);
+
+    const results = [{ callId: 'toolu_1', ok: true, output: { ok: true } }];
+    expect((await http.handle(request('POST', '/v1/documents/d/voice-sessions/s/tasks/task_1/results', json({ results })))).status).toBe(200);
+    expect(tasks.submit).toHaveBeenCalledWith(expect.objectContaining({ taskId: 'task_1', results }));
+    expect((await http.handle(request('POST', '/v1/documents/d/voice-sessions/s/tasks/task_1/results', json({ results: [{ ok: true }] })))).status).toBe(400);
+
+    expect((await api().http.handle(request('POST', '/v1/documents/d/voice-sessions/s/tasks', json({ callId: 'c', tools })))).status).toBe(404);
+  });
 });
 
 describe('routing helpers', () => {

@@ -2,9 +2,9 @@ import { HttpApi } from '@vdoc-server/adapter-http';
 import { InMemoryAgentProfileRepository } from '@vdoc-server/adapter-memory';
 import { ApiKeyAuthenticator, HmacGrantSigner, TrustedUserAuthenticator } from '@vdoc-server/adapter-security';
 import { AuditLogPublisher, CompositeEventPublisher, JsonLogger, RandomIdGenerator, TurnMetricsPublisher, RealtimeConnectionEvents, systemClock } from '@vdoc-server/adapter-system';
-import { RealtimeHost, type ModelRegistry, type Scheduler } from '@vdoc-server/adapter-vrt';
+import { ClaudeWorker, RealtimeHost, type ModelRegistry, type Scheduler } from '@vdoc-server/adapter-vrt';
 import { createApplication, type Application, type Clock, type CommandRunner, type EventPublisher, type SessionRepository } from '@vdoc-server/application';
-import { editingAssistantProfile, type ServerConfig } from '@vdoc-server/config';
+import { WORKER_INSTRUCTIONS, editingAssistantProfile, webSearchAssistantProfile, workerSpeakerProfile, type ServerConfig } from '@vdoc-server/config';
 import { DocumentSessionPolicy, ProfileId, RiskAssessor, defaultToolPolicy } from '@vdoc-server/domain';
 
 /** What differs between runtimes; everything else is built here once. */
@@ -40,7 +40,13 @@ export async function createServer(parts: ServerParts): Promise<Server> {
   if (!parts.models.has(config.model.provider)) throw new Error(`The configured model provider "${config.model.provider}" is not registered.`);
 
   const profile = editingAssistantProfile(config.model, config.limits);
-  const profiles = new InMemoryAgentProfileRepository([profile], ProfileId.assume(profile.id));
+  // Reasoning effort: low is the realtime model searching by itself, high is the worker-speaker split.
+  const anthropicKey = config.providerKeys.anthropic;
+  const profiles = new InMemoryAgentProfileRepository([
+    profile,
+    webSearchAssistantProfile(config.model, config.limits),
+    ...(anthropicKey ? [workerSpeakerProfile(config.model, config.limits)] : []),
+  ], ProfileId.assume(profile.id));
   const [signer, applications] = await Promise.all([HmacGrantSigner.create(config.signingKeys), ApiKeyAuthenticator.create(config.clients)]);
 
   const connections = new RealtimeConnectionEvents();
@@ -74,6 +80,9 @@ export async function createServer(parts: ServerParts): Promise<Server> {
   });
   connections.subscribe((id, reason) => realtime.close(id, reason));
 
-  const http = new HttpApi({ app: application, allowedOrigins: config.allowedOrigins, logger });
+  const tasks = anthropicKey
+    ? new ClaudeWorker({ apiKey: anthropicKey, ...(config.workerModel ? { model: config.workerModel } : {}), instructions: WORKER_INSTRUCTIONS, handlers: application, logger })
+    : undefined;
+  const http = new HttpApi({ app: application, allowedOrigins: config.allowedOrigins, logger, ...(tasks ? { tasks } : {}) });
   return { application, http, realtime, logger };
 }

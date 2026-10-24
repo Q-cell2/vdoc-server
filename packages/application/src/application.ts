@@ -6,6 +6,7 @@ import { RecordUserInput } from './use-cases/record-user-input';
 import { HandleRealtimeDisconnect } from './use-cases/handle-realtime-disconnect';
 import type { AgentProfileRepository, DocumentSessionPolicy, RiskAssessor, ToolPolicy } from '@vdoc-server/domain';
 import type { CallerAuthenticator, Clock, EventPublisher, GrantSigner, IdGenerator, RealtimeConnections } from './ports';
+import { AuthorizeDelegatedTask } from './use-cases/authorize-delegated-task';
 import { ConnectRealtime } from './use-cases/connect-realtime';
 import { CompleteTurn } from './use-cases/complete-turn';
 import { ConfigureRealtimeSession } from './use-cases/configure-realtime-session';
@@ -54,6 +55,7 @@ export interface Application {
   readonly reviewToolCall: Pick<ReviewToolCall, keyof ReviewToolCall>;
   readonly recordToolResult: Pick<RecordToolResult, keyof RecordToolResult>;
   readonly completeTurn: Pick<CompleteTurn, keyof CompleteTurn>;
+  readonly authorizeDelegatedTask: Pick<AuthorizeDelegatedTask, keyof AuthorizeDelegatedTask>;
 }
 
 /** Factory: wires use cases to their ports. Composition roots call this once. */
@@ -79,6 +81,7 @@ export function createApplication(deps: ApplicationDependencies): Application {
     reviewToolCall: new ReviewToolCall({ store, lifecycle, profiles, policy: deps.toolPolicy, assessor: deps.riskAssessor, clock }),
     recordToolResult: new RecordToolResult({ store, lifecycle, clock }),
     completeTurn: new CompleteTurn({ store, lifecycle, clock }),
+    authorizeDelegatedTask: new AuthorizeDelegatedTask({ store, profiles, authenticator, clock }),
   };
   if (!deps.runCommand) return app;
   return Object.fromEntries(Object.entries(app).map(([name, command]) => [name, {

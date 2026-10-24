@@ -126,7 +126,7 @@ export class RealtimeHost implements RealtimeConnections {
     const existing = this.#rooms.get(resolved.value.sessionId);
     if (existing && !existing.disposed) return ok(existing);
     try {
-      return ok(this.#createRoom(route, resolved.value.model));
+      return ok(this.#createRoom(route, resolved.value.model, resolved.value.clientToolTimeoutMs));
     } catch (error) {
       this.#log('error', 'realtime room could not start', { sessionId: route.sessionId, error: String(error) });
       return err({ code: 'SESSION_CLOSED', message: 'The voice model is not available.' });
@@ -149,7 +149,7 @@ export class RealtimeHost implements RealtimeConnections {
     }));
   }
 
-  #createRoom(route: RealtimeRouteInput, choice: Parameters<ModelRegistry['create']>[0]): RealtimeRoom {
+  #createRoom(route: RealtimeRouteInput, choice: Parameters<ModelRegistry['create']>[0], clientToolTimeoutMs?: number): RealtimeRoom {
     const { sessionId, documentId } = route;
     const handlers = this.options.handlers;
     let room!: RealtimeRoom;
@@ -172,7 +172,7 @@ export class RealtimeHost implements RealtimeConnections {
       instructions: '',
       clientTools: 'accept',
       maxContinuations: 16,
-      clientToolTimeoutMs: this.options.clientToolTimeoutMs ?? 15_000,
+      clientToolTimeoutMs: clientToolTimeoutMs ?? this.options.clientToolTimeoutMs ?? 15_000,
       hooks: {
         beforeToolCall: async (call) => {
           const decision = await handlers.reviewToolCall.execute({

@@ -6,6 +6,8 @@ import type { InstructionTemplate } from './instruction-template';
 export interface ModelChoice {
   readonly provider: string;
   readonly model?: string;
+  /** Let the model search the web itself (Boson's hosted `web_search`). Providers without one ignore it. */
+  readonly webSearch?: boolean;
 }
 
 export interface AgentProfileProps {
@@ -19,6 +21,10 @@ export interface AgentProfileProps {
   readonly defaultLanguage: string;
   /** Client tools this agent may call; anything else is refused. */
   readonly allowedTools: readonly string[];
+  /** How long a client tool may run before it fails as TIMEOUT; the realtime edge's default when absent. */
+  readonly clientToolTimeoutMs?: number;
+  /** The tool through which this agent hands requests to a worker. Sessions of agents without one cannot start worker tasks. */
+  readonly handOffTool?: string;
   /** Upper bound on recognition hints taken from the document. */
   readonly maxVocabulary: number;
   readonly limits: SessionLimits;
@@ -40,6 +46,8 @@ export class AgentProfile {
   get defaultLanguage(): string { return this.props.defaultLanguage; }
   get maxVocabulary(): number { return this.props.maxVocabulary; }
   get limits(): SessionLimits { return this.props.limits; }
+  get clientToolTimeoutMs(): number | undefined { return this.props.clientToolTimeoutMs; }
+  get handOffTool(): string | undefined { return this.props.handOffTool; }
 
   instructionsFor(values: { language: string; documentTitle: string }): string {
     return this.props.instructions.render(values);

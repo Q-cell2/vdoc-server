@@ -1,7 +1,9 @@
 export { createApplication, type Application, type ApplicationDependencies, type CommandRunner } from './application';
 export { parseDocumentContext, type DocumentContext } from './context/document-context';
+export type { DelegatedTaskRunner, DelegatedTaskStep, WorkerToolCall, WorkerToolDefinition, WorkerToolResult } from './delegated-tasks';
 export { appError, fromDomain, type AppError, type AppErrorCode } from './errors';
 export type { CallerAuthenticator, CallerCredentials, Clock, EventPublisher, GrantSigner, IdGenerator, RealtimeConnections } from './ports';
+export { AuthorizeDelegatedTask, type AuthorizeDelegatedTaskInput, type DelegatedTask } from './use-cases/authorize-delegated-task';
 export { ConnectRealtime, type ConnectRealtimeInput, type RealtimeIdentity } from './use-cases/connect-realtime';
 export { CompleteTurn } from './use-cases/complete-turn';
 export { ConfigureRealtimeSession, type AgentSessionSettings, type ConfigureRealtimeSessionInput } from './use-cases/configure-realtime-session';

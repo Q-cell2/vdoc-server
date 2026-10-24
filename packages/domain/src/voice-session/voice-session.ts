@@ -15,6 +15,7 @@ import { Usage } from './usage';
 
 export type VoiceSessionStatus = 'granted' | 'active' | 'ended';
 export type SessionError = DomainError<'SESSION_CLOSED'>;
+export type DelegationError = DomainError<'SESSION_CLOSED' | 'DELEGATION_UNKNOWN'>;
 
 /** A destructive request the user was asked about, the turn in which it was asked, and how much user input there had been by then. */
 export interface PendingConfirmation {
@@ -190,6 +191,20 @@ export class VoiceSession extends AggregateRoot<VoiceSessionEvent> {
       risk: decision.risk, decision: decision.kind, ...(decision.kind === 'deny' ? { code: decision.code } : {}), operations: assessment.operations,
     });
     return decision;
+  }
+
+  /**
+   * The turn a delegated task works in. A task starts only from a hand-off this
+   * session allowed: `callId` must name an allowed call for exactly `handOff`,
+   * still in its turn. The task's own tool calls are reviewed and counted under that turn.
+   */
+  delegatedTurn(callId: string, handOff: Pick<ToolCall, 'name' | 'arguments'>, now: number): Result<TurnId, DelegationError> {
+    if (this.state.status !== 'active' || !this.isOpenAt(now)) return err(this.closedError());
+    const entry = this.state.toolDecisions && Object.hasOwn(this.state.toolDecisions, callId) ? this.state.toolDecisions[callId] : undefined;
+    if (!entry || entry.decision.kind !== 'allow' || entry.fingerprint !== fingerprint(handOff)) {
+      return err(domainError('DELEGATION_UNKNOWN', 'No allowed hand-off matches this task.'));
+    }
+    return ok(TurnId.assume(entry.turnId));
   }
 
   recordToolResult(call: Pick<ToolCall, 'id' | 'name' | 'turnId'>, outcome: { ok: boolean; code?: string }, now: number): void {

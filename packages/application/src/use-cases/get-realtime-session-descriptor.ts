@@ -6,6 +6,7 @@ import type { VoiceSessionStore } from '../voice-session-store';
 export interface RealtimeSessionDescriptor {
   readonly sessionId: string;
   readonly model: ModelChoice;
+  readonly clientToolTimeoutMs?: number;
 }
 
 /**
@@ -22,6 +23,6 @@ export class GetRealtimeSessionDescriptor {
     if (!session.value.isOpenAt(this.deps.clock.now())) return err(appError('SESSION_CLOSED', 'This voice session has ended.'));
     const profile = await this.deps.profiles.get(session.value.profileId);
     if (!profile) return err(appError('NOT_FOUND', 'The session’s agent profile no longer exists.'));
-    return ok({ sessionId: session.value.id, model: profile.model });
+    return ok({ sessionId: session.value.id, model: profile.model, ...(profile.clientToolTimeoutMs !== undefined ? { clientToolTimeoutMs: profile.clientToolTimeoutMs } : {}) });
   }
 }

@@ -91,7 +91,7 @@ export function claudeText(options: ClaudeTextOptions): TextModel {
  * block belong to the model that declined and must not be replayed or run; text
  * before it was already spoken and stays.
  */
-function afterLastFallback(content: readonly ContentBlock[]): ContentBlock[] {
+export function afterLastFallback(content: readonly ContentBlock[]): ContentBlock[] {
   let boundary = content.length - 1;
   while (boundary >= 0 && content[boundary]!.type !== 'fallback') boundary--;
   if (boundary < 0) return [...content];

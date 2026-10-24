@@ -2,11 +2,13 @@ export { withLifecycle, type ModelLifecycle } from './lifecycle-model';
 export { ModelRegistry, type ModelProvider } from './model-registry';
 export { createModelRegistry, type ModelRegistryOptions } from './models';
 export { bosonProvider } from './providers/boson';
+export { withBosonWebSearch } from './providers/boson-web-search';
 export { cascadeClaudeProvider } from './providers/cascade';
 export { DEFAULT_CLAUDE_MODEL, claudeText, type ClaudeTextOptions } from './providers/claude-text';
 export { echoResponder, fakeProvider, type FakeReply, type FakeResponder } from './providers/fake';
 export { openaiProvider } from './providers/openai';
 export { observeErrors, type ProtocolError } from './protocol-errors';
+export { ClaudeWorker, type ClaudeWorkerOptions, type WorkerHandlers } from './worker/claude-worker';
 export {
   RealtimeHost, RealtimeRoom, toSessionConfig,
   type RealtimeHandlers, type RealtimeHostOptions, type RealtimeLogger, type RealtimeRouteInput, type Scheduler,
