@@ -166,6 +166,33 @@ it('ends the turn quietly for a blank transcript and reports a transcript that n
   expect(run).not.toHaveBeenCalled();
 });
 
+it('reports loud input the provider never hears as speech, and stays quiet for heard speech and low noise', async () => {
+  vi.useFakeTimers();
+  try {
+    const actor = fakeModel();
+    const session = await delegatedModel(actor, { run: vi.fn(async () => 'unused') }).connect({ tools });
+    cleanup.push(() => session.close());
+    const errors: string[] = [];
+    session.on('error', event => errors.push(event.error.message));
+    const format = { encoding: 'pcm16', sampleRate: 24000, channels: 1 } as const;
+    // 100 ms of a square wave at the given amplitude.
+    const chunk = (amplitude: number) => { const data = new Int16Array(2400); data.forEach((_, index) => { data[index] = index % 2 ? amplitude : -amplitude; }); return { data: new Uint8Array(data.buffer), format }; };
+    for (let index = 0; index < 10; index++) session.sendAudio(chunk(200));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(errors).toEqual([]);
+    actor.session.emit({ type: 'input.speech.start', atMs: 0 });
+    for (let index = 0; index < 10; index++) session.sendAudio(chunk(5000));
+    actor.session.emit({ type: 'input.speech.end', atMs: 1000 });
+    actor.session.emit({ type: 'input.transcript', itemId: 'noise', text: '', final: true });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(errors).toEqual([]);
+    for (let index = 0; index < 25; index++) session.sendAudio(chunk(5000));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('SPEECH_NOT_DETECTED');
+  } finally { vi.useRealTimers(); }
+});
+
 it('ignores a delayed transcript of an older utterance once the user has typed', async () => {
   const prompts: string[] = [];
   const h = await setup({ run: async (request, context) => { prompts.push(request.prompt); context.emit({ type: 'start' }); return '好'; } }, { text: '我现在需要一个表格' });

@@ -58,6 +58,15 @@ function reportedVersion(output: unknown): Run['document'] {
     ...(typeof revision === 'number' && Number.isSafeInteger(revision) && revision >= 0 ? { revision } : {}),
   };
 }
+/** Loud input the provider never reports as speech is logged, so a lost utterance is not silent. */
+const UNHEARD_LEVEL = 1000, UNHEARD_MIN_MS = 300, UNHEARD_QUIET_MS = 2000;
+/** RMS of a little-endian 16-bit PCM chunk. */
+function pcm16Level(data: Uint8Array): number {
+  let sum = 0;
+  const samples = data.length >> 1;
+  for (let index = 0; index < samples; index++) { const sample = (data[2 * index]! | data[2 * index + 1]! << 8) << 16 >> 16; sum += sample * sample; }
+  return samples ? Math.sqrt(sum / samples) : 0;
+}
 const WRITE_TOOLS = ['insert_structured_article', 'insert_test_table', 'delete_test_blocks', 'apply_document_operations', 'undo_turn', 'create_test_document'];
 
 /** Pi owns the agent loop; vRT remains the audited transport/executor for actual tools.
@@ -91,6 +100,12 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
       let transcriptTimer: ReturnType<typeof setTimeout> | undefined;
       let endingAudio: ReturnType<typeof setInterval> | undefined;
       let inputFormat: AudioFormat = { encoding: 'pcm16', sampleRate: 24000, channels: 1 };
+      /** Between the provider's speech start and end. */
+      let hearing = false;
+      /** Loud input since the provider last reported speech, and the timer that reports it as unheard. */
+      let unheardMs = 0;
+      let unheardTimer: ReturnType<typeof setTimeout> | undefined;
+      const clearUnheard = () => { clearTimeout(unheardTimer); unheardTimer = undefined; unheardMs = 0; };
       const controls = new Set<string>();
       const retiredResponses = new Set<string>();
       const retire = (id: string) => { retiredResponses.add(id); if (retiredResponses.size > 128) retiredResponses.delete(retiredResponses.values().next().value!); };
@@ -257,6 +272,7 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
       function listen<T extends EventType>(type: T, listener: (event: EventOf<T>) => void) { unsubscribers.push(performer.on(type, listener)); }
       listen('session.ready', emit);
       listen('input.speech.start', event => {
+        hearing = true; clearUnheard();
         // Speech alone never throws away a running task: its words decide (see decide). Stop/Esc still cancels at once.
         if (active) { absorbing = active; return; }
         // In server VAD mode the runtime assumes the provider already cancelled its response;
@@ -265,6 +281,7 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
         emit(event);
       });
       listen('input.speech.end', event => {
+        hearing = false;
         if (absorbing) return;
         speechEnded = true; stopEndingAudio(); emit(event);
         if (lastUserText.trim()) maybeBegin(); else awaitTranscript();
@@ -339,7 +356,20 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
       const session: RealtimeSession = {
         capabilities,
         async update(update) { config = { ...config, ...update }; await performer.update(actorConfig(config)); },
-        sendAudio: chunk => { inputFormat = chunk.format; if (chunk.data.some(byte => byte !== 0) && !speechEnded && !active && !speech) speechPending = true; performer.sendAudio(chunk); },
+        sendAudio: chunk => {
+          inputFormat = chunk.format;
+          if (chunk.data.some(byte => byte !== 0) && !speechEnded && !active && !speech) speechPending = true;
+          if (chunk.format.encoding === 'pcm16' && !hearing && !active && !speech && pendingReply === undefined && pcm16Level(chunk.data) >= UNHEARD_LEVEL) {
+            unheardMs += chunk.data.length / 2 / chunk.format.sampleRate / chunk.format.channels * 1000;
+            clearTimeout(unheardTimer);
+            unheardTimer = setTimeout(() => {
+              const loudMs = unheardMs; clearUnheard();
+              if (loudMs < UNHEARD_MIN_MS || hearing || active || speech || closed) return;
+              notice('failed', `SPEECH_NOT_DETECTED: 收到约 ${Math.round(loudMs)} ms 有声音的音频，但语音识别没有检测到说话，Pi 未启动；请重说或使用文字输入。`);
+            }, UNHEARD_QUIET_MS);
+          }
+          performer.sendAudio(chunk);
+        },
         commitAudio: () => performer.commitAudio(),
         clearAudio: () => performer.clearAudio(),
         sendText(text) { const speaking = speech !== undefined; stop(); if (speaking) performer.cancel(); inputKind = 'text'; lastUserText = text; speechEnded = true; },
@@ -364,7 +394,7 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
           pending.resolve(output);
         },
         on: (type, listener) => emitter.on(type, listener),
-        async close() { stop(); speechControls.delete(session); closed = true; for (const off of unsubscribers) off(); emitter.clear(); await performer.close(); },
+        async close() { stop(); clearUnheard(); speechControls.delete(session); closed = true; for (const off of unsubscribers) off(); emitter.clear(); await performer.close(); },
       };
       speechControls.set(session, id => {
         if (controls.has(id) || closed) return;
