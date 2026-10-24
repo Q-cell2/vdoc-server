@@ -1,4 +1,4 @@
-export { delegatedModel, DELEGATE_TOOL } from './worker/delegated-model';
+export { delegatedModel } from './worker/delegated-model';
 export { createUtteranceJudge, quickIntent, type UtteranceIntent, type UtteranceJudge } from './worker/utterance-judge';
 export { createPiWorker, type WorkerRunner, type WorkerEvent, type WorkerContext, type WorkerRequest } from './worker/pi-worker';
 export { withLifecycle, type ModelLifecycle } from './lifecycle-model';

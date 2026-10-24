@@ -1,9 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { RecordingEventPublisher } from '@vdoc-server/adapter-memory';
-import { delegatedModel, DELEGATE_TOOL, ModelRegistry, type WorkerRunner } from '@vdoc-server/adapter-vrt';
+import { delegatedModel, ModelRegistry, type WorkerRunner } from '@vdoc-server/adapter-vrt';
 import { loadConfig } from '@vdoc-server/config';
 import { connect } from '@vrealtime/client';
-import { fakeModel } from '@vrealtime/testing';
+import { fakeModel, type FakeModelOptions } from '@vrealtime/testing';
 import { createNodeServer } from '../src/create';
 import { startNodeServer } from '../src/node-server';
 import { createArticleStream } from '../src/playground/article-stream';
@@ -13,21 +13,23 @@ import { createPausableMicrophone } from '../src/playground/microphone';
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
 
-it.each([12, 1])('routes the worker through real HTTP/WS, SDK and the %i-call policy without exposing document tools to Higgs', async limit => {
-  let speaking = false;
+/** Higgs as a pure speaker: it has no tools and only reads aloud the reply it is asked to speak. */
+function speaker(onAudio?: NonNullable<FakeModelOptions['onCommand']>) {
   let count = 0;
-  const actor = fakeModel({ onCommand(command, session) {
-    if (command.type === 'submitToolResult') speaking = true;
+  return fakeModel({ onCommand(command, session) {
+    onAudio?.(command, session);
     if (command.type !== 'respond') return;
-    const isReply = speaking; speaking = false;
-    const responseId = `actor-${++count}`;
+    const responseId = `speaker-${++count}`;
     queueMicrotask(() => {
       session.emit({ type: 'response.start', responseId });
-      if (isReply) session.emit({ type: 'output.transcript', responseId, itemId: responseId, delta: '收到后台结果。' });
-      else session.emit({ type: 'tool.call', responseId, callId: 'delegate', name: DELEGATE_TOOL, arguments: { request: 'read then write' } });
-      session.emit({ type: 'response.end', responseId, status: 'done', stopReason: isReply ? 'completed' : 'tool_calls' });
+      session.emit({ type: 'output.transcript', responseId, itemId: responseId, delta: '收到后台结果。' });
+      session.emit({ type: 'response.end', responseId, status: 'done', stopReason: 'completed' });
     });
   } });
+}
+
+it.each([12, 1])('routes the worker through real HTTP/WS, SDK and the %i-call policy without exposing document tools to Higgs', async limit => {
+  const actor = speaker();
   const results: unknown[] = [];
   const worker: WorkerRunner = { async run(request, context) {
     expect(request.tools.map(tool => tool.name)).toEqual(['read_document', 'insert_structured_article']);
@@ -70,26 +72,15 @@ it.each([12, 1])('routes the worker through real HTTP/WS, SDK and the %i-call po
   expect(results).toHaveLength(2);
   if (limit === 1) expect(results[1]).toMatchObject({ error: { code: 'REJECTED' } });
   expect(text.join('')).toBe(limit === 1 ? '写入受限。' : '已写入。');
-  expect(actor.session.commandsOf('connect')[0]!.config.tools?.map(tool => tool.name)).toEqual([DELEGATE_TOOL]);
-  expect(actor.session.commandsOf('submitToolResult')).toHaveLength(1);
+  expect(actor.session.commandsOf('connect')[0]!.config.tools).toEqual([]);
+  expect(actor.session.commandsOf('submitToolResult')).toHaveLength(0);
 });
 
 
 it('continues the same worker write after pausing capture, despite late background voice frames', async () => {
-  let reply = false;
-  let count = 0;
-  const actor = fakeModel({ onCommand(command, session) {
+  const actor = speaker((command, session) => {
     if (command.type === 'sendAudio' && command.chunk.data.some(byte => byte !== 0)) session.emit({ type: 'input.speech.start', atMs: 1 });
-    if (command.type === 'submitToolResult') reply = true;
-    if (command.type !== 'respond') return;
-    const speaking = reply; reply = false;
-    const responseId = `performer-${++count}`;
-    queueMicrotask(() => {
-      session.emit({ type: 'response.start', responseId });
-      if (!speaking) session.emit({ type: 'tool.call', responseId, callId: 'delegate', name: DELEGATE_TOOL, arguments: { request: '完成写入' } });
-      session.emit({ type: 'response.end', responseId, status: 'done', stopReason: speaking ? 'completed' : 'tool_calls' });
-    });
-  } });
+  });
   let release!: () => void;
   const barrier = new Promise<void>(resolve => { release = resolve; });
   let started = false;
@@ -139,19 +130,7 @@ it('continues the same worker write after pausing capture, despite late backgrou
 
 
 it('renders article deltas in the document before a complete tool call, then commits exactly once over real HTTP/WS', async () => {
-  let reply = false;
-  let count = 0;
-  const actor = fakeModel({ onCommand(command, session) {
-    if (command.type === 'submitToolResult') reply = true;
-    if (command.type !== 'respond') return;
-    const speaking = reply; reply = false;
-    const responseId = `stream-actor-${++count}`;
-    queueMicrotask(() => {
-      session.emit({ type: 'response.start', responseId });
-      if (!speaking) session.emit({ type: 'tool.call', responseId, callId: 'delegate', name: DELEGATE_TOOL, arguments: { request: '写文章' } });
-      session.emit({ type: 'response.end', responseId, status: 'done', stopReason: speaking ? 'completed' : 'tool_calls' });
-    });
-  } });
+  const actor = speaker();
   let release!: () => void;
   const barrier = new Promise<void>(resolve => { release = resolve; });
   const worker: WorkerRunner = { async run(_request, context) {
@@ -198,26 +177,15 @@ it('renders article deltas in the document before a complete tool call, then com
 it('finishes speech immediately on pause over the authenticated context channel, then streams and writes without more audio', async () => {
   let heard = false;
   let speechEnded = false;
-  let reply = false;
-  let count = 0;
-  const actor = fakeModel({ onCommand(command, session) {
+  const actor = speaker((command, session) => {
     if (command.type === 'sendAudio' && !heard) { heard = true; session.emit({ type: 'input.speech.start', atMs: 0 }); }
     if (command.type === 'sendAudio' && heard && !speechEnded && command.chunk.data.every(byte => byte === 0)) {
       speechEnded = true;
       session.emit({ type: 'input.speech.end', atMs: 100 });
       session.emit({ type: 'input.transcript', itemId: 'u', text: '写一篇关于 Python 的文章', final: true });
-      // Deliberately do not start an automatic response: exercise the bounded fallback.
+      // No reply from Higgs is needed: the server starts Pi from this transcript.
     }
-    if (command.type === 'submitToolResult') reply = true;
-    if (command.type !== 'respond') return;
-    const speaking = reply; reply = false;
-    const responseId = `speech-${++count}`;
-    queueMicrotask(() => {
-      session.emit({ type: 'response.start', responseId });
-      if (!speaking) session.emit({ type: 'tool.call', responseId, callId: 'delegate', name: DELEGATE_TOOL, arguments: { request: '写文章' } });
-      session.emit({ type: 'response.end', responseId, status: 'done', stopReason: speaking ? 'completed' : 'tool_calls' });
-    });
-  } });
+  });
   const worker: WorkerRunner = { async run(_request, context) {
     context.emit({ type: 'start' });
     const doc = await context.execute('read', 'read_document', {}) as { sessionId: string; revision: number };
@@ -258,19 +226,7 @@ it('finishes speech immediately on pause over the authenticated context channel,
 
 
 it.each(['development', 'test'])('governs partial deletion in %s over real HTTP/WS and preserves all unselected content', async environment => {
-  let reply = false;
-  let serial = 0;
-  const actor = fakeModel({ onCommand(command, session) {
-    if (command.type === 'submitToolResult') reply = true;
-    if (command.type !== 'respond') return;
-    const speaking = reply; reply = false;
-    const responseId = `delete-${++serial}`;
-    queueMicrotask(() => {
-      session.emit({ type: 'response.start', responseId });
-      if (!speaking) session.emit({ type: 'tool.call', responseId, callId: 'delegate', name: DELEGATE_TOOL, arguments: { request: '删除最后两段' } });
-      session.emit({ type: 'response.end', responseId, status: 'done', stopReason: speaking ? 'completed' : 'tool_calls' });
-    });
-  } });
+  const actor = speaker();
   let deletion: unknown;
   const worker: WorkerRunner = { async run(_request, context) {
     context.emit({ type: 'start' });

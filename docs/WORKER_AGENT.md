@@ -2,7 +2,8 @@
 
 ## 角色与部署
 
-`VDOC_SERVER_MODEL=boson-worker` 把 Higgs Realtime 变成只有 `run_worker_agent` 的前台演员。
+`VDOC_SERVER_MODEL=boson-worker` 把 Higgs Realtime 变成没有工具的前台：它只负责听（语音识别、判断说完）和说（朗读 Pi 的回复）。
+是否执行、执行什么不由 Higgs 决定：服务端拿到用户的最终转写或打字输入后直接启动 Pi。
 后台使用固定版本 `@earendil-works/pi-agent-core` / `pi-ai` 1.4.0，默认 Claude Sonnet 5.5。
 同时存在 Boson 与 Anthropic 密钥、且未指定模型时，此模式为默认。显式 `boson` 保留旧模式。
 Node 需要 22.19+；Cloudflare 复用同一模型适配器，密钥来自 Worker Secrets。
@@ -14,23 +15,27 @@ Node 需要 22.19+；Cloudflare 复用同一模型适配器，密钥来自 Worke
 ## 执行路径
 
 ```text
-用户 → Higgs → run_worker_agent（仅此一个）
-                 ↓ Server 模型边界拦截，不占用工具执行队列
+用户语音 → Higgs 识别 → 最终转写（或打字输入）
+                 ↓ Server 直接启动 Pi（Higgs 自己生成的回复一律取消、不播放）
                Pi Agent 自主循环
                  ↓ 实际工具调用事件
                vRT → Server 权限/预算/确认 → vdoc 原有工具
                  ↑ 真实工具结果
-               Pi → 最终短回复 → Higgs 语音表演
+               Pi → 最终短回复 → Server 让 Higgs 逐字朗读
 ```
 
 Pi 是唯一的后台循环负责人。组合模型声明工具结果后自行续生成，vRT 不再额外请求一轮；
 但它仍然追踪每个 Pi 轮次和真实工具调用，保持已有幂等 ID、取消、审查和客户端超时。
-前台委派不会被当成一个长时间运行的普通服务端工具，否则会阻塞后续文档工具造成死锁。
+没有前台委派这一步，所以不存在“Higgs 没有及时委派”的失败（原 DELEGATION_TIMEOUT / ACTOR_DELEGATION_FAILED）。
+只剩转写本身：语音结束后 15 秒仍无最终转写，报 TRANSCRIPTION_TIMEOUT。空白转写视为噪音，直接结束本轮。
 未修改 vRT 或 vdoc 源码。
 
 前台在后台完成前生成的语音被抑制；不允许前台工具直接访问文档，也不向它发送文档工具定义和工具结果。
-最终只发送 `{ spokenReply }` 给前台，提示它逐字发声。Realtime 模型的逐字忠实度仍需真实 Boson 验证，
+最终服务端向前台发一条“请逐字朗读下面这句话，不要添加任何内容：<回复>”的消息并请求回复。
+实测真实 Boson 会逐字朗读这条消息（中英文、疑问句、长句均逐字），而单次回复附带的 instructions 会被它忽略。Realtime 模型的逐字忠实度仍需真实 Boson 验证，
 并非程序级保证；如果产品要求严格逐字朗读，应另选 Boson TTS 路径。
+
+下文“暂停收音的结束确认与委派超时”和“委派修复”两节描述的是 2026-10-24 之前由 Higgs 调用 `run_worker_agent` 委派的旧流程，仅作历史记录。
 
 ## 流式与提交
 

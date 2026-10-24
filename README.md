@@ -1,6 +1,6 @@
 # vdoc-server
 
-vdoc 的语音会话服务端：为文档签发语音会话、配置语音 Agent、审查 Agent 的每一次工具调用并留下审计记录。实时语音由 [vRealTime（vRT）](https://github.com/austinchennn/vRT) 承担，默认语音模型是 Boson Higgs Realtime；同时配置 Anthropic 密钥时默认由后台 Pi Agent 执行任务，Higgs 只负责委派与发声。
+vdoc 的语音会话服务端：为文档签发语音会话、配置语音 Agent、审查 Agent 的每一次工具调用并留下审计记录。实时语音由 [vRealTime（vRT）](https://github.com/austinchennn/vRT) 承担，默认语音模型是 Boson Higgs Realtime；同时配置 Anthropic 密钥时默认由后台 Pi Agent 执行任务，Higgs 只负责听和说。
 
 文档修改在浏览器中的 vdoc 里执行；读取结果进入后台模型的任务上下文，不写入普通日志或持久文档存储。服务端负责任务编排和权限审查。
 
@@ -36,7 +36,7 @@ BOSON_API_KEY=... ANTHROPIC_API_KEY=... VDOC_SERVER_MODEL=boson-worker npm run d
 页面仅接受本机请求，生产模式和 Cloudflare 不提供此调试入口。
 这不是完整 vdoc 编辑器：支持新建/切换测试文档、直接输入、文章插入与最近一次插入的撤销；刷新会清空测试文档。
 
-Higgs 只获得 `run_worker_agent` 一个工具；Pi 决定所有文档工具调用并接收实际结果。
+Higgs 没有任何工具：服务端拿到最终转写（或打字输入）就直接启动 Pi，Higgs 只朗读 Pi 的回复。Pi 决定所有文档工具调用并接收实际结果。
 权限、确认、版本校验、客户端去重继续沿用现有通道。文字与工具参数增量沿用现有事件；
 vdoc 是否显示它们取决于已有 UI。详见 [Worker agent 架构](docs/WORKER_AGENT.md)。
 显式设置 `VDOC_SERVER_MODEL=boson` 可恢复旧模式。

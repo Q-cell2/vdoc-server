@@ -1,10 +1,10 @@
-import { finishWorkerSpeech, WORKER_STARTED_TEXT } from '../src/worker/delegated-model';
+import { finishWorkerSpeech, READ_ALOUD_PREFIX, WORKER_STARTED_TEXT } from '../src/worker/delegated-model';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createAssistantMessageEventStream, type AssistantMessage } from '@earendil-works/pi-ai';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
-import { RealtimeError, startSession, type AgentSession, type RealtimeEvent, type ToolSpec } from '@vrealtime/core';
-import { fakeModel } from '@vrealtime/testing';
-import { createPiWorker, delegatedModel, DELEGATE_TOOL, type UtteranceJudge, type WorkerRunner } from '../src';
+import { RealtimeError, startSession, type AgentSession, type ToolSpec } from '@vrealtime/core';
+import { fakeModel, type FakeModel } from '@vrealtime/testing';
+import { createPiWorker, delegatedModel, type UtteranceJudge, type WorkerRunner } from '../src';
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -37,31 +37,28 @@ function scriptedWorker(replies: AssistantMessage['content'][], options: { maxRe
   };
   return { worker: createPiWorker({ apiKey: 'test', streamFn, ...options }), requests };
 }
-function actorModel() {
-  let speak = false;
+/** Higgs as a pure speaker: asked to read a message aloud, it says exactly that message. */
+function speakerModel(status: 'done' | 'failed' | 'cancelled' = 'done') {
   let number = 0;
+  let toRead: string | undefined;
   return fakeModel({ capabilities: { tools: { autoReplyAfterResult: false } }, onCommand(command, session) {
-    if (command.type === 'submitToolResult') speak = (command.output as { ok?: boolean })?.ok === true;
+    if (command.type === 'sendText' && command.text.startsWith(READ_ALOUD_PREFIX)) toRead = command.text.slice(READ_ALOUD_PREFIX.length);
     if (command.type !== 'respond') return;
-    const speaking = speak; speak = false;
-    const responseId = `actor-${++number}`;
+    const quoted = toRead; toRead = undefined;
+    const responseId = `speech-${++number}`;
     queueMicrotask(() => {
       session.emit({ type: 'response.start', responseId });
-      if (speaking) {
-        session.emit({ type: 'output.transcript', responseId, itemId: `${responseId}-voice`, delta: '任务完成。' });
+      if (quoted) {
+        session.emit({ type: 'output.transcript', responseId, itemId: `${responseId}-voice`, delta: quoted });
         session.emit({ type: 'output.audio', responseId, itemId: `${responseId}-voice`, chunk: { data: new Uint8Array(48), format: { encoding: 'pcm16', sampleRate: 24000, channels: 1 } } });
-      } else {
-        // Unauthorized factual speech before delegation must be suppressed.
-        session.emit({ type: 'output.transcript', responseId, itemId: 'untrusted', delta: 'I already edited it.' });
-        session.emit({ type: 'tool.call', responseId, callId: `delegate-${number}`, name: DELEGATE_TOOL, arguments: { request: '写一篇文章' } });
       }
-      session.emit({ type: 'response.end', responseId, status: 'done', stopReason: speaking ? 'completed' : 'tool_calls' });
+      session.emit({ type: 'response.end', responseId, status, stopReason: status === 'done' ? 'completed' : status });
     });
   } });
 }
-async function setup(worker: WorkerRunner, beforeToolCall?: (name: string) => boolean, timeout = 1000, finishTools = true, judge?: UtteranceJudge) {
-  const actor = actorModel();
-  const model = delegatedModel(actor, worker, timeout, undefined, judge);
+async function setup(worker: WorkerRunner, options: { beforeToolCall?: (name: string) => boolean; timeout?: number; transcriptTimeout?: number; finishTools?: boolean; judge?: UtteranceJudge; actor?: FakeModel; text?: string | null } = {}) {
+  const actor = options.actor ?? speakerModel();
+  const model = delegatedModel(actor, worker, options.timeout ?? 1000, options.transcriptTimeout ?? 1000, options.judge);
   const calls: { name: string; callId: string; args: unknown }[] = [];
   const text: string[] = [];
   const voice: string[] = [];
@@ -70,26 +67,35 @@ async function setup(worker: WorkerRunner, beforeToolCall?: (name: string) => bo
   let session!: AgentSession;
   session = await startSession({ model, instructions: 'Worker document instructions.', clientTools: 'accept', maxContinuations: 16,
     hooks: {
-      beforeToolCall: call => beforeToolCall?.(call.name) === false ? { action: 'reject', message: 'Denied by policy' } : { action: 'allow' },
+      beforeToolCall: call => options.beforeToolCall?.(call.name) === false ? { action: 'reject', message: 'Denied by policy' } : { action: 'allow' },
       onTurnEnd: ended,
     },
   }, { clientTools: tools });
   cleanup.push(() => session.close());
   session.on('tool.call', call => {
     calls.push({ name: call.name, callId: call.callId, args: call.arguments });
-    if (finishTools) session.submitClientToolResult(call.callId, { ok: true, output: { ok: true, revision: 7 } });
+    if (options.finishTools !== false) session.submitClientToolResult(call.callId, { ok: true, output: { ok: true, revision: 7 } });
   });
   session.on('text', event => { if (!event.delta.startsWith('[执行阶段]')) text.push(event.delta); });
   session.on('transcript', event => { if (event.role === 'agent' && !event.final) voice.push(event.text); });
   session.on('error', event => errors.push(event.error.message));
-  session.sendText('请读取文档并写入一篇完整文章');
+  if (options.text !== null) session.sendText(options.text ?? '请读取文档并写入一篇完整文章');
   return { actor, session, calls, text, voice, errors, ended };
+}
+/** Server-VAD voice input: the provider reports the utterance and its final transcript. */
+function speakTo(actor: FakeModel, words: string, itemId = 'utterance') {
+  actor.session.emit({ type: 'input.speech.start', atMs: 0 });
+  actor.session.emit({ type: 'input.speech.end', atMs: 300 });
+  actor.session.emit({ type: 'input.transcript', itemId, text: words, final: true });
 }
 const read: AssistantMessage['content'] = [{ type: 'toolCall', id: 'same-provider-id', name: 'read_document', arguments: {} }];
 const write: AssistantMessage['content'] = [{ type: 'toolCall', id: 'same-provider-id', name: 'insert_structured_article', arguments: { expectedRevision: 7 } }];
 const done: AssistantMessage['content'] = [{ type: 'text', text: '文章已写入。' }];
+const hanging = (onStart?: (context: Parameters<WorkerRunner['run']>[1]) => void): WorkerRunner => ({ run: async (_request, context) => {
+  context.emit({ type: 'start' }); onStart?.(context); return new Promise(() => {});
+} });
 
-it('runs real Pi read/write/final turns through vRT once, streams text, then lets the one-tool actor speak', async () => {
+it('runs real Pi read/write/final turns through vRT once, streams text, then has Higgs read the reply verbatim', async () => {
   const { worker, requests } = scriptedWorker([read, write, done]);
   const h = await setup(worker);
   await expect.poll(() => h.ended.mock.calls.length).toBe(1);
@@ -97,20 +103,77 @@ it('runs real Pi read/write/final turns through vRT once, streams text, then let
   expect(h.calls.map(call => call.name)).toEqual(['read_document', 'insert_structured_article']);
   expect(new Set(h.calls.map(call => call.callId)).size).toBe(2);
   expect(h.text.join('')).toBe('文章已写入。');
-  expect(h.voice).toEqual(['任务完成。']);
+  expect(h.voice).toEqual(['文章已写入。']);
   expect(requests).toHaveLength(3);
   expect(JSON.stringify(requests[1])).toContain('revision');
-  expect(h.actor.session.commandsOf('connect')[0]!.config.tools?.map(tool => tool.name)).toEqual([DELEGATE_TOOL]);
-  expect(h.actor.session.commandsOf('connect')[0]!.config.instructions).not.toContain('Worker document instructions');
-  const results = h.actor.session.commandsOf('submitToolResult');
-  expect(results).toHaveLength(1);
-  expect(results[0]!.output).toEqual({ ok: true, spokenReply: '文章已写入。' });
-  expect(h.actor.session.commandsOf('respond')).toHaveLength(2);
+  // Higgs gets no tools and none of the document instructions: it cannot decide or act.
+  const connect = h.actor.session.commandsOf('connect')[0]!.config;
+  expect(connect.tools).toEqual([]);
+  expect(connect.instructions).not.toContain('Worker document instructions');
+  expect(h.actor.session.commandsOf('respond')).toHaveLength(1);
+  expect(h.actor.session.commandsOf('sendText').map(command => command.text)).toEqual([`${READ_ALOUD_PREFIX}文章已写入。`]);
+  expect(h.actor.session.commandsOf('submitToolResult')).toHaveLength(0);
+});
+
+it('starts Pi from the final transcript at once and drops every reply Higgs starts on its own', async () => {
+  const prompts: string[] = [];
+  const worker: WorkerRunner = { run: async (request, context) => { prompts.push(request.prompt); context.emit({ type: 'start' }); context.emit({ type: 'text', delta: '好的' }); return '好的'; } };
+  const h = await setup(worker, { text: null });
+  const audio: string[] = []; h.session.on('audio', event => audio.push(event.responseId));
+  h.actor.session.emit({ type: 'input.speech.start', atMs: 0 });
+  h.actor.session.emit({ type: 'input.speech.end', atMs: 300 });
+  // Boson replies to every utterance by itself; that reply must never be heard or decide anything.
+  h.actor.session.emit({ type: 'response.start', responseId: 'boson-auto' });
+  h.actor.session.emit({ type: 'output.audio', responseId: 'boson-auto', itemId: 'auto', chunk: { data: new Uint8Array(48), format: { encoding: 'pcm16', sampleRate: 24000, channels: 1 } } });
+  h.actor.session.emit({ type: 'tool.call', responseId: 'boson-auto', callId: 'x', name: 'insert_structured_article', arguments: { expectedRevision: 7 } });
+  h.actor.session.emit({ type: 'response.end', responseId: 'boson-auto', status: 'done', stopReason: 'tool_calls' });
+  h.actor.session.emit({ type: 'input.transcript', itemId: 'utterance', text: '把标题改成蓝色', final: true });
+  await expect.poll(() => h.ended.mock.calls.length).toBe(1);
+  expect(prompts).toHaveLength(1);
+  expect(JSON.parse(prompts[0]!)).toMatchObject({ userRequest: '把标题改成蓝色', requestSource: 'final-transcript' });
+  expect(h.actor.session.commandsOf('cancel')).toHaveLength(1);
+  expect(h.calls).toEqual([]);
+  expect(audio).not.toContain('boson-auto');
+  expect(h.voice).toEqual(['好的']);
+  expect(h.errors).toEqual([]);
+});
+
+it('waits for the end of speech when the transcript arrives first', async () => {
+  const run = vi.fn(async (_request: unknown, context: Parameters<WorkerRunner['run']>[1]) => { context.emit({ type: 'start' }); return '好'; });
+  const h = await setup({ run }, { text: null });
+  h.actor.session.emit({ type: 'input.speech.start', atMs: 0 });
+  h.actor.session.emit({ type: 'input.transcript', itemId: 'early', text: '你好', final: true });
+  expect(run).not.toHaveBeenCalled();
+  h.actor.session.emit({ type: 'input.speech.end', atMs: 300 });
+  await expect.poll(() => h.ended.mock.calls.length).toBe(1);
+  expect(run).toHaveBeenCalledOnce();
+});
+
+it('ends the turn quietly for a blank transcript and reports a transcript that never comes', async () => {
+  const run = vi.fn(async () => 'unused');
+  const h = await setup({ run }, { text: null, transcriptTimeout: 20 });
+  speakTo(h.actor, '   ');
+  await expect.poll(() => h.ended.mock.calls.length).toBe(1);
+  expect(h.errors).toEqual([]);
+  h.actor.session.emit({ type: 'input.speech.start', atMs: 0 });
+  h.actor.session.emit({ type: 'input.speech.end', atMs: 300 });
+  await expect.poll(() => h.ended.mock.calls.length).toBe(2);
+  expect(h.errors[0]).toContain('TRANSCRIPTION_TIMEOUT');
+  expect(run).not.toHaveBeenCalled();
+});
+
+it('ignores a delayed transcript of an older utterance once the user has typed', async () => {
+  const prompts: string[] = [];
+  const h = await setup({ run: async (request, context) => { prompts.push(request.prompt); context.emit({ type: 'start' }); return '好'; } }, { text: '我现在需要一个表格' });
+  h.actor.session.emit({ type: 'input.transcript', itemId: 'old-voice', text: '旧语音任务', final: true });
+  await expect.poll(() => h.ended.mock.calls.length).toBe(1);
+  expect(prompts).toHaveLength(1);
+  expect(JSON.parse(prompts[0]!)).toMatchObject({ userRequest: '我现在需要一个表格', requestSource: 'typed' });
 });
 
 it('feeds a policy denial back to Pi without executing the client write', async () => {
   const { worker, requests } = scriptedWorker([read, write, [{ type: 'text', text: '写入被拒绝。' }]]);
-  const h = await setup(worker, name => name !== 'insert_structured_article');
+  const h = await setup(worker, { beforeToolCall: name => name !== 'insert_structured_article' });
   await expect.poll(() => h.ended.mock.calls.length).toBe(1);
   expect(h.calls.map(call => call.name)).toEqual(['read_document']);
   expect(JSON.stringify(requests[2])).toContain('REJECTED');
@@ -125,16 +188,17 @@ it('validates Pi arguments before dispatch and does not apply partial JSON', asy
   expect(h.errors).toEqual([]);
 });
 
-it('bounds Pi generation independently of the performer and reports failure without a success voice', async () => {
+it('bounds Pi generation and reports failure without a success voice', async () => {
   const { worker } = scriptedWorker([read, read, done], { maxRequests: 1 });
   const h = await setup(worker);
   await expect.poll(() => h.errors.length).toBeGreaterThan(0);
+  expect(h.errors[0]).toContain('WORKER_FAILED');
   expect(h.calls).toHaveLength(1);
   expect(h.voice).toEqual([]);
-  expect(h.actor.session.commandsOf('respond')).toHaveLength(1);
+  expect(h.actor.session.commandsOf('respond')).toHaveLength(0);
 });
 
-it('cancels a delegated run and drops its late tool call, text, and completion', async () => {
+it('cancels a run on Stop and drops its late tool call, text and completion', async () => {
   let release!: () => void;
   let started = false;
   let aborted = false;
@@ -154,51 +218,31 @@ it('cancels a delegated run and drops its late tool call, text, and completion',
   await new Promise(resolve => setTimeout(resolve, 10));
   expect(h.calls).toEqual([]);
   expect(h.text).toEqual([]);
-  expect(h.actor.session.commandsOf('submitToolResult').map(call => call.output)).toEqual([{ ok: false, code: 'INTERRUPTED' }]);
+  // Only Pi was running: there is no Higgs response to cancel.
+  expect(h.actor.session.commandsOf('cancel')).toHaveLength(0);
+  expect(h.actor.session.commandsOf('respond')).toHaveLength(0);
 });
 
 it('times out a hanging worker and ends the active turn', async () => {
-  const h = await setup({ run: async () => new Promise(() => {}) }, undefined, 20);
+  const h = await setup({ run: async () => new Promise(() => {}) }, { timeout: 20 });
   await expect.poll(() => h.errors.length).toBeGreaterThan(0);
   await expect.poll(() => h.ended.mock.calls.length).toBe(1);
   expect(h.calls).toEqual([]);
-  expect(h.actor.session.commandsOf('respond')).toHaveLength(1);
+  expect(h.actor.session.commandsOf('respond')).toHaveLength(0);
 });
 
-it('keeps exactly one actor tool on context/tool updates', async () => {
-  const actor = actorModel();
-  const model = delegatedModel(actor, { run: async () => 'ok' });
-  const session = await model.connect({ tools });
+it('keeps Higgs without tools or document instructions on context updates', async () => {
+  const actor = speakerModel();
+  const session = await delegatedModel(actor, { run: async () => 'ok' }).connect({ tools });
   cleanup.push(() => session.close());
-  const seen: RealtimeEvent[] = [];
-  session.on('output.text', event => seen.push(event));
   await session.update({ tools, instructions: 'worker only' });
-  expect(actor.session.commandsOf('update')[0]!.config.tools?.map(tool => tool.name)).toEqual([DELEGATE_TOOL]);
+  expect(actor.session.commandsOf('update')[0]!.config.tools).toEqual([]);
   expect(actor.session.commandsOf('update')[0]!.config.instructions).not.toContain('worker only');
 });
 
-
-it('blocks an actor trying to bypass delegation with a document tool', async () => {
-  const actor = fakeModel();
-  const run = vi.fn(async () => 'should not run');
-  const session = await delegatedModel(actor, { run }).connect({ tools });
-  cleanup.push(() => session.close());
-  const failures: string[] = [];
-  const calls: unknown[] = [];
-  session.on('error', event => failures.push(event.error.message));
-  session.on('tool.call', event => calls.push(event));
-  actor.session.emit({ type: 'response.start', responseId: 'bypass' });
-  actor.session.emit({ type: 'tool.call', responseId: 'bypass', callId: 'bad', name: 'insert_structured_article', arguments: { expectedRevision: 7 } });
-  actor.session.emit({ type: 'response.end', responseId: 'bypass', status: 'done', stopReason: 'tool_calls' });
-  expect(run).not.toHaveBeenCalled();
-  expect(calls).toEqual([]);
-  expect(failures).toHaveLength(1);
-});
-
-
 it('aborts real Pi during a client tool and starts a clean next task without replaying the write', async () => {
   const { worker, requests } = scriptedWorker([read, [{ type: 'text', text: '改为回答。' }]]);
-  const h = await setup(worker, undefined, 1000, false);
+  const h = await setup(worker, { finishTools: false });
   await expect.poll(() => h.calls.length).toBe(1);
   const oldCallId = h.calls[0]!.callId;
   h.session.interrupt('keyboard');
@@ -209,13 +253,9 @@ it('aborts real Pi during a client tool and starts a clean next task without rep
   h.session.submitClientToolResult(oldCallId, { ok: true, output: { ok: true, revision: 99 } });
   expect(h.calls).toHaveLength(1);
   expect(requests).toHaveLength(2);
-  expect(h.actor.session.commandsOf('submitToolResult').map(call => call.output)).toEqual([
-    { ok: false, code: 'INTERRUPTED' }, { ok: true, spokenReply: '改为回答。' },
-  ]);
 });
 
-
-it('ends paused audio using acknowledged server VAD, requests a missing response after transcription, and starts the worker', async () => {
+it('pads a paused utterance with silence until the provider ends it, then starts Pi from its transcript', async () => {
   const actor = fakeModel();
   const worker = { run: vi.fn(async (_request, context) => { context.emit({ type: 'start' }); return '完成'; }) } satisfies WorkerRunner;
   const session = await delegatedModel(actor, worker, 1000, 2000).connect({ tools });
@@ -223,122 +263,40 @@ it('ends paused audio using acknowledged server VAD, requests a missing response
   const progress: string[] = [];
   session.on('output.text', event => progress.push(event.delta));
   actor.session.emit({ type: 'input.speech.start', atMs: 0 });
+  session.sendAudio({ data: new Uint8Array([1, 2]), format: { encoding: 'pcm16', sampleRate: 24000, channels: 1 } });
   expect(finishWorkerSpeech(session, 'pause-1')).toBe(true);
   finishWorkerSpeech(session, 'pause-1');
   finishWorkerSpeech(session, 'pause-2');
-  await expect.poll(() => actor.session.commandsOf('sendAudio').length).toBeGreaterThan(0);
+  await expect.poll(() => actor.session.commandsOf('sendAudio').length).toBeGreaterThan(1);
   expect(actor.session.commandsOf('commitAudio')).toHaveLength(0);
   expect(actor.session.commandsOf('connect')[0]!.config.turnDetection).toBe('server');
   actor.session.emit({ type: 'input.speech.end', atMs: 300 });
   actor.session.emit({ type: 'input.transcript', itemId: 'utterance', text: '写文章', final: true });
-  await expect.poll(() => actor.session.commandsOf('respond').length).toBe(1);
-  actor.session.emit({ type: 'response.start', responseId: 'delegate' });
-  actor.session.emit({ type: 'tool.call', responseId: 'delegate', callId: 'delegation', name: DELEGATE_TOOL, arguments: { request: '写文章' } });
-  actor.session.emit({ type: 'response.end', responseId: 'delegate', status: 'done', stopReason: 'tool_calls' });
-  session.respond();
   expect(worker.run).toHaveBeenCalledTimes(1);
   expect(progress).toContain(WORKER_STARTED_TEXT);
-});
-
-it('does not recommit an automatically ended utterance or duplicate its automatic response', async () => {
-  const actor = fakeModel();
-  const session = await delegatedModel(actor, { run: async () => 'done' }, 1000, 2000).connect({ tools });
-  cleanup.push(() => session.close());
-  actor.session.emit({ type: 'input.speech.start', atMs: 0 });
-  actor.session.emit({ type: 'input.speech.end', atMs: 200 });
-  actor.session.emit({ type: 'input.transcript', itemId: 'u', text: '测试', final: true });
-  finishWorkerSpeech(session, 'pause');
-  actor.session.emit({ type: 'response.start', responseId: 'auto' });
-  await new Promise(resolve => setTimeout(resolve, 650));
-  expect(actor.session.commandsOf('commitAudio')).toHaveLength(0);
   expect(actor.session.commandsOf('respond')).toHaveLength(0);
 });
 
-it.each([false, true])('bounds a stalled delegation (response started=%s), ignores late tools, and permits a clean retry', async started => {
-  const actor = fakeModel();
-  const run = vi.fn(async () => 'must not run');
-  const session = await delegatedModel(actor, { run }, 1000, 20).connect({ tools });
-  cleanup.push(() => session.close());
-  const failures: string[] = [];
-  const ended: RealtimeEvent[] = [];
-  session.on('error', event => failures.push(event.error.message));
-  session.on('response.end', event => ended.push(event));
-  session.sendText('写文章'); session.respond();
-  if (started) actor.session.emit({ type: 'response.start', responseId: 'stalled' });
-  await expect.poll(() => failures.length).toBe(1);
-  expect(failures[0]).toContain('DELEGATION_TIMEOUT');
-  expect(ended).toContainEqual(expect.objectContaining({ status: 'failed' }));
-  if (!started) actor.session.emit({ type: 'response.start', responseId: 'stalled' });
-  session.sendText('重试');
-  actor.session.emit({ type: 'response.start', responseId: 'stalled' });
-  actor.session.emit({ type: 'tool.call', responseId: 'stalled', callId: 'late', name: DELEGATE_TOOL, arguments: { request: 'late' } });
-  actor.session.emit({ type: 'response.end', responseId: 'stalled', status: 'done', stopReason: 'tool_calls' });
-  session.respond();
-  expect(run).not.toHaveBeenCalled();
-});
-
-
-it('reports a delegation timeout through the real runtime and ends thinking even before any response starts', async () => {
-  const actor = fakeModel();
-  const ended = vi.fn();
-  const session = await startSession({ model: delegatedModel(actor, { run: async () => 'unused' }, 1000, 20), instructions: '', hooks: { onTurnEnd: ended } });
-  cleanup.push(() => session.close());
-  const errors: string[] = [];
-  session.on('error', event => errors.push(event.error.message));
-  session.sendText('请求');
-  await expect.poll(() => ended.mock.calls.length).toBe(1);
-  expect(errors.some(error => error.includes('DELEGATION_TIMEOUT'))).toBe(true);
-});
-
-it('does not pad, recommit or restart a worker when the user pauses after work has already begun', async () => {
-  const actor = actorModel();
-  let started = false;
+it('does not pad, recommit or restart Pi when the user pauses after work has begun', async () => {
   let aborted = false;
-  const worker: WorkerRunner = { run: async (_request, context) => {
-    started = true;
-    context.signal.addEventListener('abort', () => { aborted = true; });
-    return new Promise(() => {});
-  } };
-  const model = delegatedModel(actor, worker, 1000);
-  const session = await model.connect({ tools }); cleanup.push(() => session.close());
+  let started = false;
+  const actor = speakerModel();
+  const session = await delegatedModel(actor, hanging(context => { started = true; context.signal.addEventListener('abort', () => { aborted = true; }); }), 1000).connect({ tools });
+  cleanup.push(() => session.close());
   session.sendText('写文章'); session.respond();
-  await expect.poll(() => actor.session.commandsOf('respond').length).toBe(1);
-  // Direct model use: resume after the actor's completed delegate response.
-  session.respond();
   await expect.poll(() => started).toBe(true);
-  const responses = actor.session.commandsOf('respond').length;
   finishWorkerSpeech(session, 'pause-during-worker');
   expect(actor.session.commandsOf('commitAudio')).toHaveLength(0);
   expect(actor.session.commandsOf('sendAudio')).toHaveLength(0);
-  expect(actor.session.commandsOf('respond')).toHaveLength(responses);
+  expect(actor.session.commandsOf('respond')).toHaveLength(0);
   expect(aborted).toBe(false);
 });
 
-
-it('does not send performer cancellation when only Pi is running', async () => {
-  let started = false;
-  let aborted = false;
+it.each(['response_not_active', 'response_cancel_not_active', 'some_recoverable_voice_error'])('keeps Pi working through a recoverable %s voice error', async providerCode => {
   let release!: () => void;
-  const worker: WorkerRunner = { run: async (_request, context) => {
-    context.emit({ type: 'start' }); started = true;
-    context.signal.addEventListener('abort', () => { aborted = true; });
-    await new Promise<void>(resolve => { release = resolve; });
-    return 'cancelled';
-  } };
-  const h = await setup(worker);
-  await expect.poll(() => started).toBe(true);
-  h.session.interrupt('keyboard'); release();
-  expect(aborted).toBe(true);
-  expect(h.actor.session.commandsOf('cancel')).toHaveLength(0);
-  expect(h.errors).toEqual([]);
-});
-
-it.each(['response_not_active', 'response_cancel_not_active'])('ignores a delayed benign %s error without aborting the new worker', async providerCode => {
-  let started = false;
   let aborted = false;
-  let release!: () => void;
   const worker: WorkerRunner = { run: async (_request, context) => {
-    context.emit({ type: 'start' }); started = true;
+    context.emit({ type: 'start' });
     context.signal.addEventListener('abort', () => { aborted = true; });
     await new Promise<void>(resolve => { release = resolve; });
     await context.execute('write-after-race', 'insert_structured_article', { expectedRevision: 7 });
@@ -347,7 +305,7 @@ it.each(['response_not_active', 'response_cancel_not_active'])('ignores a delaye
     return '写入成功';
   } };
   const h = await setup(worker);
-  await expect.poll(() => started).toBe(true);
+  await expect.poll(() => release !== undefined).toBe(true);
   h.actor.session.emit({ type: 'error', error: new RealtimeError('invalid_request', 'No active response to cancel.', { provider: 'boson', providerCode }), recoverable: true });
   release();
   await expect.poll(() => h.ended.mock.calls.length).toBe(1);
@@ -357,20 +315,15 @@ it.each(['response_not_active', 'response_cancel_not_active'])('ignores a delaye
   expect(h.text.join('')).toBe('写入成功');
 });
 
-it('still cancels an active performer, tolerates its cancel race, and reports genuine provider errors', async () => {
-  const actor = fakeModel();
-  const session = await delegatedModel(actor, { run: async () => 'unused' }).connect({ tools });
-  cleanup.push(() => session.close());
-  const errors: string[] = []; session.on('error', event => errors.push(event.error.message));
-  actor.session.emit({ type: 'response.start', responseId: 'speaking' });
-  session.cancel(); session.cancel();
-  expect(actor.session.commandsOf('cancel')).toHaveLength(1);
-  actor.session.emit({ type: 'error', error: new Error('No active response to cancel.'), recoverable: true });
-  expect(errors).toEqual([]);
-  actor.session.emit({ type: 'error', error: new RealtimeError('auth', 'Authentication failed'), recoverable: false });
-  expect(errors).toEqual(['Authentication failed']);
+it('ends the task on a fatal voice error and reports it', async () => {
+  let aborted = false;
+  let started = false;
+  const h = await setup(hanging(context => { started = true; context.signal.addEventListener('abort', () => { aborted = true; }); }));
+  await expect.poll(() => started).toBe(true);
+  h.actor.session.emit({ type: 'error', error: new RealtimeError('auth', 'Authentication failed'), recoverable: false });
+  await expect.poll(() => aborted).toBe(true);
+  expect(h.errors).toContain('Authentication failed');
 });
-
 
 it('keeps Pi running when the user speaks mid-task and hands it the words as an update', async () => {
   let release!: () => void;
@@ -386,14 +339,13 @@ it('keeps Pi running when the user speaks mid-task and hands it the words as an 
     context.emit({ type: 'start' }); context.emit({ type: 'text', delta: '已删除第二部分' }); return '已删除第二部分';
   } };
   const h = await setup(worker);
-  await expect.poll(() => updates.length === 0 && release !== undefined).toBe(true);
+  await expect.poll(() => release !== undefined).toBe(true);
   const transcripts: string[] = []; h.session.on('transcript', event => { if (event.role === 'user') transcripts.push(event.text); });
   h.actor.session.emit({ type: 'input.speech.start', atMs: 10 });
   h.actor.session.emit({ type: 'input.speech.end', atMs: 20 });
   // Boson starts its own reply to the utterance; it must not reach the user or run a second task.
   h.actor.session.emit({ type: 'response.start', responseId: 'auto-reply' });
-  h.actor.session.emit({ type: 'tool.call', responseId: 'auto-reply', callId: 'second-delegation', name: DELEGATE_TOOL, arguments: { request: 'Delete the second part' } });
-  h.actor.session.emit({ type: 'response.end', responseId: 'auto-reply', status: 'done', stopReason: 'tool_calls' });
+  h.actor.session.emit({ type: 'response.end', responseId: 'auto-reply', status: 'done', stopReason: 'completed' });
   h.actor.session.emit({ type: 'input.transcript', itemId: 'repeat', text: ' Delete the second part. ', final: true });
   expect(aborted).toBe(false);
   expect(updates).toEqual([JSON.stringify({ userUpdate: 'Delete the second part.' })]);
@@ -408,19 +360,11 @@ it('keeps Pi running when the user speaks mid-task and hands it the words as an 
 
 it('drops silence or noise heard mid-task without touching the running task', async () => {
   let aborted = false;
-  const updates: string[] = [];
   let started = false;
-  const worker: WorkerRunner = { run: async (_request, context) => {
-    context.emit({ type: 'start' }); started = true;
-    context.signal.addEventListener('abort', () => { aborted = true; });
-    context.onSteer?.(message => updates.push(message));
-    return new Promise(() => {});
-  } };
-  const h = await setup(worker);
+  const updates: string[] = [];
+  const h = await setup(hanging(context => { started = true; context.signal.addEventListener('abort', () => { aborted = true; }); context.onSteer?.(message => updates.push(message)); }));
   await expect.poll(() => started).toBe(true);
-  h.actor.session.emit({ type: 'input.speech.start', atMs: 10 });
-  h.actor.session.emit({ type: 'input.speech.end', atMs: 20 });
-  h.actor.session.emit({ type: 'input.transcript', itemId: 'noise', text: '  ', final: true });
+  speakTo(h.actor, '  ', 'noise');
   expect(updates).toEqual([]);
   expect(aborted).toBe(false);
   // Stop still cancels at once.
@@ -428,25 +372,23 @@ it('drops silence or noise heard mid-task without touching the running task', as
   expect(aborted).toBe(true);
 });
 
-it('stops the running task at once when the user says stop, without starting another', async () => {
+it('stops the running task at once when the user says stop, says so, and starts nothing else', async () => {
   let runs = 0;
   let aborted = false;
-  const judged: string[] = [];
+  const judge = { judge: vi.fn(async () => 'continue' as const) };
   const worker: WorkerRunner = { run: async (_request, context) => {
     runs++; context.emit({ type: 'start' });
     context.signal.addEventListener('abort', () => { aborted = true; });
     return new Promise(() => {});
   } };
-  const judge = { judge: vi.fn(async (_task: string, words: string) => { judged.push(words); return 'continue' as const; }) };
-  const h = await setup(worker, undefined, 1000, true, judge);
+  const h = await setup(worker, { judge });
   await expect.poll(() => runs).toBe(1);
   const interrupted = vi.fn(); h.session.on('interrupted', interrupted);
-  h.actor.session.emit({ type: 'input.speech.start', atMs: 10 });
-  h.actor.session.emit({ type: 'input.speech.end', atMs: 20 });
-  h.actor.session.emit({ type: 'input.transcript', itemId: 'stop', text: '停！', final: true });
+  speakTo(h.actor, '停！', 'stop');
   await expect.poll(() => aborted).toBe(true);
-  expect(judged).toEqual([]);
+  expect(judge.judge).not.toHaveBeenCalled();
   expect(interrupted).toHaveBeenCalled();
+  await expect.poll(() => h.voice).toEqual(['好的，已停止。']);
   expect(runs).toBe(1);
   expect(h.errors).toEqual([]);
 });
@@ -460,11 +402,9 @@ it('replaces the running task when the words ask to redo it or for a new task', 
     context.emit({ type: 'text', delta: '新文章已写入' }); return '新文章已写入';
   } };
   const judge = { judge: vi.fn(async () => 'replace' as const) };
-  const h = await setup(worker, undefined, 1000, true, judge);
+  const h = await setup(worker, { judge });
   await expect.poll(() => prompts.length).toBe(1);
-  h.actor.session.emit({ type: 'input.speech.start', atMs: 10 });
-  h.actor.session.emit({ type: 'input.speech.end', atMs: 20 });
-  h.actor.session.emit({ type: 'input.transcript', itemId: 'redo', text: '重写，改成写关于火星的', final: true });
+  speakTo(h.actor, '重写，改成写关于火星的', 'redo');
   await expect.poll(() => h.text.join('')).toBe('新文章已写入');
   expect(oldAborted).toBe(true);
   expect(judge.judge).toHaveBeenCalledWith('请读取文档并写入一篇完整文章', '重写，改成写关于火星的', expect.any(AbortSignal));
@@ -477,13 +417,7 @@ it('hands words the judge calls a continuation to the running task', async () =>
   const updates: string[] = [];
   let aborted = false;
   let started = false;
-  const worker: WorkerRunner = { run: async (_request, context) => {
-    context.emit({ type: 'start' }); started = true;
-    context.signal.addEventListener('abort', () => { aborted = true; });
-    context.onSteer?.(message => updates.push(message));
-    return new Promise(() => {});
-  } };
-  const h = await setup(worker, undefined, 1000, true, { judge: async () => 'continue' });
+  const h = await setup(hanging(context => { started = true; context.signal.addEventListener('abort', () => { aborted = true; }); context.onSteer?.(message => updates.push(message)); }), { judge: { judge: async () => 'continue' } });
   await expect.poll(() => started).toBe(true);
   h.actor.session.emit({ type: 'input.speech.start', atMs: 10 });
   h.actor.session.emit({ type: 'input.transcript', itemId: 'detail', text: '再加一段结论', final: true });
@@ -504,120 +438,13 @@ it('lets real Pi read a mid-task update before its next model request', async ()
   expect(JSON.stringify(requests[1])).toContain('The Problem');
 });
 
-it.each(['typed', 'voice'])('uses only the authoritative %s request when Higgs delegates an unrelated task', async source => {
-  const actor = fakeModel();
-  const requests: string[] = [];
-  const worker: WorkerRunner = { run: async (request, context) => { requests.push(request.prompt); context.emit({ type: 'start' }); return 'done'; } };
-  const session = await delegatedModel(actor, worker, 1000, 1000).connect({ tools }); cleanup.push(() => session.close());
-  const userRequest = '我现在需要你列一个表格，里面是所有奥特曼的名字。';
-  if (source === 'typed') {
-    session.sendText(userRequest);
-    // A delayed transcript from a past utterance cannot override typed input.
-    actor.session.emit({ type: 'input.transcript', itemId: 'old-voice', text: '旧语音任务', final: true });
-  } else {
-    actor.session.emit({ type: 'input.speech.start', atMs: 0 });
-    actor.session.emit({ type: 'input.speech.end', atMs: 10 });
-  }
-  actor.session.emit({ type: 'response.start', responseId: 'conflicting-delegate' });
-  actor.session.emit({ type: 'tool.call', responseId: 'conflicting-delegate', callId: 'delegate', name: DELEGATE_TOOL, arguments: { request: '列一个电影票房前十的表格' } });
-  actor.session.emit({ type: 'response.end', responseId: 'conflicting-delegate', status: 'done', stopReason: 'tool_calls' });
-  session.respond();
-  if (source === 'voice') {
-    expect(requests).toHaveLength(0);
-    actor.session.emit({ type: 'input.transcript', itemId: 'current-voice', text: userRequest, final: true });
-  }
-  expect(requests).toHaveLength(1);
-  expect(JSON.parse(requests[0]!)).toMatchObject({ userRequest, requestSource: source === 'typed' ? 'typed' : 'final-transcript' });
-  expect(requests[0]).not.toContain('电影票房');
-  expect(requests[0]).not.toContain('delegatedRequest');
+it('treats the user talking over the spoken reply as an interruption, not a failure', async () => {
+  const h = await setup({ async run(_request, context) { context.emit({ type: 'start' }); context.emit({ type: 'text', delta: '文章已写入' }); return '文章已写入'; } }, { actor: speakerModel('cancelled') });
+  await expect.poll(() => h.ended.mock.calls.length).toBe(1);
+  expect(h.errors).toEqual([]);
 });
 
-it('fails closed when a voice delegation has no final transcript, without running an invented actor task', async () => {
-  const actor = fakeModel();
-  const run = vi.fn(async () => 'unused');
-  const session = await delegatedModel(actor, { run }, 1000, 20).connect({ tools }); cleanup.push(() => session.close());
-  const failures: string[] = []; session.on('error', event => failures.push(event.error.message));
-  actor.session.emit({ type: 'input.speech.start', atMs: 0 });
-  actor.session.emit({ type: 'response.start', responseId: 'no-transcript' });
-  actor.session.emit({ type: 'tool.call', responseId: 'no-transcript', callId: 'delegate', name: DELEGATE_TOOL, arguments: { request: 'invented task' } });
-  actor.session.emit({ type: 'response.end', responseId: 'no-transcript', status: 'done', stopReason: 'tool_calls' });
-  session.respond();
-  await expect.poll(() => failures.length).toBe(1);
-  expect(failures[0]).toContain('TRANSCRIPTION_TIMEOUT');
-  actor.session.emit({ type: 'input.transcript', itemId: 'late', text: '迟到的语音', final: true });
-  expect(run).not.toHaveBeenCalled();
-});
-
-
-it.each(['missing', 'wrong-tool'])('repairs a %s delegation once before any worker edit, then writes only once', async failure => {
-  let replies = false;
-  let responses = 0;
-  const actor = fakeModel({ onCommand(command, session) {
-    if (command.type === 'submitToolResult') replies = true;
-    if (command.type !== 'respond') return;
-    const number = ++responses; const speaking = replies;
-    queueMicrotask(() => {
-      const responseId = `repair-${number}`;
-      session.emit({ type: 'response.start', responseId });
-      if (!speaking && number === 1 && failure === 'wrong-tool') session.emit({ type: 'tool.call', responseId, callId: 'bad', name: 'insert_structured_article', arguments: {} });
-      if (!speaking && number > 1) session.emit({ type: 'tool.call', responseId, callId: 'delegate', name: DELEGATE_TOOL, arguments: { request: 'ignored rewrite' } });
-      session.emit({ type: 'response.end', responseId, status: 'done', stopReason: !speaking && number > 1 ? 'tool_calls' : 'completed' });
-    });
-  } });
-  let runs = 0;
-  const worker: WorkerRunner = { async run(request, context) {
-    runs++; expect(JSON.parse(request.prompt).userRequest).toBe('删除关于鲁迅的文章');
-    context.emit({ type: 'start' });
-    await context.execute('write-once', 'insert_structured_article', { expectedRevision: 7 });
-    context.emit({ type: 'turn-end', usage: { inputTokens: 1, outputTokens: 1 } });
-    context.emit({ type: 'start' }); context.emit({ type: 'text', delta: '完成' }); return '完成';
-  } };
-  const ended = vi.fn();
-  const session = await startSession({ model: delegatedModel(actor, worker), instructions: '', clientTools: 'accept', hooks: { onTurnEnd: ended } }, { clientTools: tools });
-  cleanup.push(() => session.close());
-  let writes = 0; const errors: string[] = [];
-  session.on('tool.call', call => { writes++; session.submitClientToolResult(call.callId, { ok: true, output: { ok: true, revision: 8 } }); });
-  session.on('error', event => errors.push(event.error.message));
-  session.sendText('删除关于鲁迅的文章');
-  await expect.poll(() => ended.mock.calls.length).toBe(1);
-  expect(errors).toEqual([]); expect(writes).toBe(1); expect(runs).toBe(1);
-  expect(actor.session.commandsOf('respond')).toHaveLength(3);
-  expect(actor.session.commandsOf('respond')[1]!.options?.instructions).toContain('删除关于鲁迅的文章');
-});
-
-it('stops after one unsuccessful delegation repair and reports the real reason without dispatching tools', async () => {
-  let responses = 0;
-  const actor = fakeModel({ onCommand(command, session) {
-    if (command.type !== 'respond') return;
-    const responseId = `still-missing-${++responses}`;
-    queueMicrotask(() => {
-      session.emit({ type: 'response.start', responseId });
-      session.emit({ type: 'response.end', responseId, status: 'done', stopReason: 'completed' });
-    });
-  } });
-  const run = vi.fn(async () => 'must not run'); const ended = vi.fn();
-  const session = await startSession({ model: delegatedModel(actor, { run }), instructions: '', hooks: { onTurnEnd: ended } });
-  cleanup.push(() => session.close());
-  const errors: string[] = []; session.on('error', event => errors.push(event.error.message));
-  session.sendText('任务');
-  await expect.poll(() => ended.mock.calls.length).toBe(1);
-  expect(responses).toBe(2); expect(run).not.toHaveBeenCalled();
-  expect(errors[0]).toContain('ACTOR_DELEGATION_FAILED');
-  expect(errors.at(-1)).toBe('Generation stopped: failed');
-});
-
-it('labels voice-only failure after a successful write and never replays that write', async () => {
-  let speaking = false; let responses = 0;
-  const actor = fakeModel({ onCommand(command, session) {
-    if (command.type === 'submitToolResult') speaking = true;
-    if (command.type !== 'respond') return;
-    const isVoice = speaking; const responseId = `voice-fail-${++responses}`;
-    queueMicrotask(() => {
-      session.emit({ type: 'response.start', responseId });
-      if (!isVoice) session.emit({ type: 'tool.call', responseId, callId: 'delegate', name: DELEGATE_TOOL, arguments: { request: '任务' } });
-      session.emit({ type: 'response.end', responseId, status: isVoice ? 'failed' : 'done', stopReason: isVoice ? 'failed' : 'tool_calls' });
-    });
-  } });
+it('labels a voice-only failure after a successful write with its reason and never replays the write', async () => {
   let runs = 0;
   const worker: WorkerRunner = { async run(_request, context) {
     runs++; context.emit({ type: 'start' });
@@ -625,74 +452,25 @@ it('labels voice-only failure after a successful write and never replays that wr
     context.emit({ type: 'turn-end', usage: { inputTokens: 1, outputTokens: 1 } });
     context.emit({ type: 'start' }); context.emit({ type: 'text', delta: '文档已修改' }); return '文档已修改';
   } };
-  const ended = vi.fn();
-  const session = await startSession({ model: delegatedModel(actor, worker), instructions: '', clientTools: 'accept', hooks: { onTurnEnd: ended } }, { clientTools: tools });
-  cleanup.push(() => session.close());
-  let writes = 0; const errors: string[] = [];
-  session.on('tool.call', call => { writes++; session.submitClientToolResult(call.callId, { ok: true, output: { ok: true, revision: 8 } }); });
-  session.on('error', event => errors.push(event.error.message));
-  session.sendText('任务');
-  await expect.poll(() => ended.mock.calls.length).toBe(1);
-  expect(errors[0]).toContain('VOICE_REPLY_FAILED');
-  expect(errors[0]).toContain('文档已有成功修改');
-  expect(errors[0]).toContain('[status=failed, stopReason=failed]');
-  expect(writes).toBe(1); expect(runs).toBe(1); expect(responses).toBe(2);
+  const h = await setup(worker, { actor: speakerModel('failed') });
+  await expect.poll(() => h.ended.mock.calls.length).toBe(1);
+  expect(h.errors[0]).toContain('VOICE_REPLY_FAILED');
+  expect(h.errors[0]).toContain('文档已有成功修改');
+  expect(h.errors[0]).toContain('[status=failed, stopReason=failed]');
+  expect(h.calls).toHaveLength(1); expect(runs).toBe(1);
 });
 
-it('treats the user talking over the spoken summary as an interruption, not a failure', async () => {
-  let speaking = false; let responses = 0;
-  const actor = fakeModel({ onCommand(command, session) {
-    if (command.type === 'submitToolResult') speaking = true;
-    if (command.type !== 'respond') return;
-    const isVoice = speaking; const responseId = `summary-${++responses}`;
-    queueMicrotask(() => {
-      session.emit({ type: 'response.start', responseId });
-      if (!isVoice) session.emit({ type: 'tool.call', responseId, callId: 'delegate', name: DELEGATE_TOOL, arguments: { request: '任务' } });
-      session.emit({ type: 'response.end', responseId, status: isVoice ? 'cancelled' : 'done', stopReason: isVoice ? 'cancelled' : 'tool_calls' });
-    });
-  } });
-  const worker: WorkerRunner = { async run(_request, context) { context.emit({ type: 'start' }); context.emit({ type: 'text', delta: '文章已写入' }); return '文章已写入'; } };
-  const ended = vi.fn();
-  const session = await startSession({ model: delegatedModel(actor, worker), instructions: '', clientTools: 'accept', hooks: { onTurnEnd: ended } }, { clientTools: tools });
-  cleanup.push(() => session.close());
-  const errors: string[] = []; session.on('error', event => errors.push(event.error.message));
-  session.sendText('任务');
-  await expect.poll(() => ended.mock.calls.length).toBe(1);
-  expect(errors).toEqual([]);
-});
-
-it('names a tool call made during the spoken reply as the reason the reply failed', async () => {
-  let speaking = false; let responses = 0;
-  const actor = fakeModel({ onCommand(command, session) {
-    if (command.type === 'submitToolResult') speaking = true;
-    if (command.type !== 'respond') return;
-    const isVoice = speaking; const responseId = `reply-${++responses}`;
-    queueMicrotask(() => {
-      session.emit({ type: 'response.start', responseId });
-      session.emit({ type: 'tool.call', responseId, callId: `delegate-${responses}`, name: DELEGATE_TOOL, arguments: { request: '任务' } });
-      session.emit({ type: 'response.end', responseId, status: 'done', stopReason: isVoice ? 'completed' : 'tool_calls' });
-    });
-  } });
-  const worker: WorkerRunner = { async run(_request, context) { context.emit({ type: 'start' }); context.emit({ type: 'text', delta: '好了' }); return '好了'; } };
-  const ended = vi.fn();
-  const session = await startSession({ model: delegatedModel(actor, worker), instructions: '', clientTools: 'accept', hooks: { onTurnEnd: ended } }, { clientTools: tools });
-  cleanup.push(() => session.close());
-  const errors: string[] = []; session.on('error', event => errors.push(event.error.message));
-  session.sendText('任务');
-  await expect.poll(() => ended.mock.calls.length).toBe(1);
-  expect(errors[0]).toContain(`[status=done, stopReason=completed, tool call ${DELEGATE_TOOL} during reply]`);
-});
-
-it('reports already completed edits if Pi fails after applying a write, without an unsafe full-task retry', async () => {
+it('reports already completed edits if Pi fails after applying a write, without retrying the task', async () => {
+  let runs = 0;
   const worker: WorkerRunner = { run: async (_request, context) => {
-    context.emit({ type: 'start' });
+    runs++; context.emit({ type: 'start' });
     await context.execute('write', 'insert_structured_article', { expectedRevision: 7 });
     throw new Error('private provider error details');
   } };
   const h = await setup(worker);
   await expect.poll(() => h.ended.mock.calls.length).toBe(1);
-  expect(h.calls).toHaveLength(1);
   expect(h.errors[0]).toContain('WORKER_FAILED_AFTER_WRITE');
-  expect(h.errors.join('')).not.toContain('private provider error details');
-  expect(h.actor.session.commandsOf('respond')).toHaveLength(1);
+  expect(h.errors[0]).not.toContain('private provider error details');
+  expect(runs).toBe(1);
+  expect(h.voice).toEqual([]);
 });
