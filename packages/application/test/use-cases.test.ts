@@ -149,6 +149,38 @@ describe('ReviewToolCall, RecordToolResult and CompleteTurn', () => {
     expect(await h.app.reviewToolCall.execute(destructive('t4', 2))).toEqual({ kind: 'allow', risk: 'high' });
   });
 
+  it('keeps a confirmation until the confirmed edit succeeds, and only until the user speaks again', async () => {
+    const h = harness();
+    const { sessionId } = await connected(h);
+    const args = { operations: [{ type: 'text.findReplace', query: 'a', replacement: 'b' }] };
+    const asked = call(sessionId, 'apply_document_operations', args, 't1');
+    expect(await h.app.reviewToolCall.execute(asked)).toMatchObject({ kind: 'confirm' });
+    await h.app.recordUserInput.execute({ sessionId });
+    // The yes lets the call through; it fails in the editor, so the retry in the same reply needs no second yes.
+    const first = call(sessionId, 'apply_document_operations', args, 't2');
+    expect(await h.app.reviewToolCall.execute(first)).toEqual({ kind: 'allow', risk: 'high' });
+    await h.app.recordToolResult.execute({ sessionId, callId: first.callId, name: first.name, turnId: 't2', ok: false, code: 'FAILED' });
+    const retry = call(sessionId, 'apply_document_operations', args, 't2');
+    expect(await h.app.reviewToolCall.execute(retry)).toEqual({ kind: 'allow', risk: 'high' });
+    await h.app.recordToolResult.execute({ sessionId, callId: retry.callId, name: retry.name, turnId: 't2', ok: true });
+    // Once it succeeded, the same edit needs a new yes.
+    await h.app.recordUserInput.execute({ sessionId });
+    expect(await h.app.reviewToolCall.execute(call(sessionId, 'apply_document_operations', args, 't3'))).toMatchObject({ kind: 'confirm' });
+  });
+
+  it('asks again when the user has spoken since a confirmed edit failed', async () => {
+    const h = harness();
+    const { sessionId } = await connected(h);
+    const args = { operations: [{ type: 'block.delete', id: 'b1' }] };
+    expect(await h.app.reviewToolCall.execute(call(sessionId, 'apply_document_operations', args, 't1'))).toMatchObject({ kind: 'confirm' });
+    await h.app.recordUserInput.execute({ sessionId });
+    const first = call(sessionId, 'apply_document_operations', args, 't2');
+    expect(await h.app.reviewToolCall.execute(first)).toEqual({ kind: 'allow', risk: 'high' });
+    await h.app.recordToolResult.execute({ sessionId, callId: first.callId, name: first.name, turnId: 't2', ok: false, code: 'FAILED' });
+    await h.app.recordUserInput.execute({ sessionId });
+    expect(await h.app.reviewToolCall.execute(call(sessionId, 'apply_document_operations', args, 't3'))).toMatchObject({ kind: 'confirm' });
+  });
+
   it('denies calls for unknown or ended sessions', async () => {
     const h = harness({ limits: { maxDurationMs: 10_000 } });
     expect(await h.app.reviewToolCall.execute(call('vs_404', 'read_document'))).toMatchObject({ kind: 'deny', code: 'SESSION_CLOSED' });
