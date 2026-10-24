@@ -6,6 +6,7 @@ import { RealtimeError, startSession, type AgentSession, type ToolSpec } from '@
 import { fakeModel, type FakeModel } from '@vrealtime/testing';
 import { HIGH_RISK_CONFIRMATION_MESSAGE } from '@vdoc-server/domain';
 import { createPiWorker, delegatedModel, type UtteranceJudge, type WorkerRunner } from '../src';
+import { thinkingBetweenToolsOnly } from '../src/worker/pi-worker';
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -13,7 +14,7 @@ const tools: ToolSpec[] = [
   { name: 'read_document', description: 'Read', parameters: { type: 'object', properties: {} } },
   { name: 'insert_structured_article', description: 'Write', parameters: { type: 'object', required: ['expectedRevision'], properties: { expectedRevision: { type: 'integer' } } } },
 ];
-function scriptedWorker(replies: AssistantMessage['content'][], options: { maxRequests?: number } = {}) {
+function scriptedWorker(replies: AssistantMessage['content'][], options: { maxRequests?: number; prefetch?: boolean } = {}) {
   const requests: unknown[] = [];
   const streamFn: StreamFn = (_model, context) => {
     requests.push(structuredClone(context));
@@ -99,6 +100,16 @@ const hanging = (onStart?: (context: Parameters<WorkerRunner['run']>[1]) => void
   context.emit({ type: 'start' }); onStart?.(context); return new Promise(() => {});
 } });
 
+it('turns thinking off for a model Pi cannot switch off by swapping only the thinking field for between_tools', () => {
+  const payload = {
+    model: 'claude-sonnet-5-5', max_tokens: 8192, stream: true,
+    thinking: { type: 'adaptive', display: 'summarized' }, output_config: { effort: 'high' },
+    messages: [{ role: 'user', content: [] }, { role: 'system', content: [], output_config: { effort: 'low' } }],
+  };
+  expect(thinkingBetweenToolsOnly(payload)).toEqual({ ...payload, thinking: { type: 'between_tools' } });
+  expect(payload.thinking.type).toBe('adaptive');
+});
+
 it('runs real Pi read/write/final turns through vRT once, streams text, then has Higgs read the reply verbatim', async () => {
   const { worker, requests } = scriptedWorker([read, write, done]);
   const h = await setup(worker);
@@ -117,6 +128,44 @@ it('runs real Pi read/write/final turns through vRT once, streams text, then has
   expect(h.actor.session.commandsOf('respond')).toHaveLength(1);
   expect(h.actor.session.commandsOf('sendText').map(command => command.text)).toEqual([`${READ_ALOUD_PREFIX}文章已写入。`]);
   expect(h.actor.session.commandsOf('submitToolResult')).toHaveLength(0);
+});
+
+/** The task and system prompt of one scripted provider request. */
+const sent = (request: unknown) => {
+  const { messages } = request as { messages: { role: string; content: string | { text: string }[] }[] };
+  const text = (role: string) => { const content = messages.find(message => message.role === role)!.content; return typeof content === 'string' ? content : content[0]!.text; };
+  return { systemPrompt: text('system'), task: JSON.parse(text('user')) as Record<string, unknown> };
+};
+
+it('reads the document once before Pi starts and hands it over, so Pi needs no read request of its own', async () => {
+  const { worker, requests } = scriptedWorker([write, done], { prefetch: true });
+  const h = await setup(worker);
+  await expect.poll(() => h.ended.mock.calls.length).toBe(1);
+  expect(h.errors).toEqual([]);
+  expect(h.calls.map(call => call.name)).toEqual(['read_document', 'insert_structured_article']);
+  expect(requests).toHaveLength(2);
+  expect(sent(requests[0]).task).toMatchObject({ userRequest: '请读取文档并写入一篇完整文章', document: { ok: true, revision: 7 } });
+  expect(sent(requests[0]).systemPrompt).toContain('taken just before this task started');
+  expect(h.text.join('')).toBe('文章已写入。');
+  expect(h.voice).toEqual(['文章已写入。']);
+});
+
+it('leaves the document to Pi when the prefetch read is denied or the option is off', async () => {
+  let reads = 0;
+  const denied = scriptedWorker([read, write, done], { prefetch: true });
+  const h = await setup(denied.worker, { beforeToolCall: name => name !== 'read_document' || ++reads > 1 });
+  await expect.poll(() => h.ended.mock.calls.length).toBe(1);
+  expect(h.errors).toEqual([]);
+  expect(denied.requests).toHaveLength(3);
+  expect(sent(denied.requests[0]).task).not.toHaveProperty('document');
+  expect(sent(denied.requests[0]).systemPrompt).not.toContain('taken just before this task started');
+  expect(h.calls.map(call => call.name)).toEqual(['read_document', 'insert_structured_article']);
+
+  const off = scriptedWorker([read, write, done]);
+  const g = await setup(off.worker);
+  await expect.poll(() => g.ended.mock.calls.length).toBe(1);
+  expect(off.requests).toHaveLength(3);
+  expect(sent(off.requests[0]).task).not.toHaveProperty('document');
 });
 
 it('starts Pi from the final transcript at once and drops every reply Higgs starts on its own', async () => {

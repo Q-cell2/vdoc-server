@@ -87,7 +87,11 @@ describe('editing assistant profile', () => {
 
 
 it('selects the worker architecture with both keys, validates explicit mode and budgets', () => {
-  expect(loadConfig({ BOSON_API_KEY: 'b', ANTHROPIC_API_KEY: 'a' })).toMatchObject({ ok: true, value: { model: { provider: 'boson-worker' }, workerAgent: { model: 'claude-sonnet-5-5', maxRequests: 12, timeoutMs: 90000 } } });
+  expect(loadConfig({ BOSON_API_KEY: 'b', ANTHROPIC_API_KEY: 'a' })).toMatchObject({ ok: true, value: { model: { provider: 'boson-worker' }, workerAgent: { model: 'claude-haiku-5-5', thinking: 'off', prefetch: true, maxRequests: 12, timeoutMs: 90000 } } });
+  expect(loadConfig({ BOSON_API_KEY: 'b', ANTHROPIC_API_KEY: 'a', VDOC_SERVER_WORKER_PREFETCH: 'false' })).toMatchObject({ ok: true, value: { workerAgent: { prefetch: false } } });
+  expect(loadConfig({ VDOC_SERVER_WORKER_PREFETCH: 'yes' }).ok).toBe(false);
+  expect(loadConfig({ BOSON_API_KEY: 'b', ANTHROPIC_API_KEY: 'a', VDOC_SERVER_WORKER_THINKING: 'low' })).toMatchObject({ ok: true, value: { workerAgent: { thinking: 'low' } } });
+  expect(loadConfig({ VDOC_SERVER_WORKER_THINKING: 'max' }).ok).toBe(false);
   expect(loadConfig({ VDOC_SERVER_MODEL: 'boson-worker', BOSON_API_KEY: 'b' }).ok).toBe(false);
   expect(loadConfig({ VDOC_SERVER_MODEL: 'boson-worker', ANTHROPIC_API_KEY: 'a' }).ok).toBe(false);
   expect(loadConfig({ VDOC_SERVER_WORKER_MAX_REQUESTS: '13' }).ok).toBe(false);
