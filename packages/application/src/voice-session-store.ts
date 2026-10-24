@@ -33,8 +33,9 @@ export class VoiceSessionStore {
     return this.repository.get(sessionId);
   }
 
-  async findUnended(documentId: DocumentId): Promise<VoiceSession[]> {
-    return this.repository.findUnended(documentId);
+  /** Unended sessions that are not yet past a deadline. Overdue ones may await their wake-up and do not count. */
+  async findOpen(documentId: DocumentId, now: number): Promise<VoiceSession[]> {
+    return (await this.repository.findUnended(documentId)).filter((session) => session.isOpenAt(now));
   }
 
   async commit(session: VoiceSession, requestId?: string, identity?: AuditIdentity): Promise<void> {

@@ -1,10 +1,13 @@
-import { VoiceSession, type DomainEvent, type VoiceSessionSnapshot, type VoiceSessionRepository, type VoiceSessionEvent } from '@vdoc-server/domain';
+import { VoiceSession, type DomainEvent, type Principal, type VoiceSessionSnapshot, type VoiceSessionRepository, type VoiceSessionEvent } from '@vdoc-server/domain';
 
 export type SessionEvent = VoiceSessionEvent & {
   readonly eventId: string; readonly principalId: string; readonly documentId: string;
   readonly clientId: string; readonly userId?: string; readonly requestId: string;
 };
 export interface AuditIdentity { readonly clientId: string; readonly userId?: string; readonly requestId?: string; }
+export function auditIdentityOf(principal: Principal, requestId?: string): AuditIdentity {
+  return { clientId: principal.clientId ?? principal.id, ...(principal.userId ? { userId: principal.userId } : {}), ...(requestId ? { requestId } : {}) };
+}
 /** Persistence envelope, atomically stored with the aggregate; never part of its state. */
 export interface SessionRecord {
   readonly session: VoiceSessionSnapshot;

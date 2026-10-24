@@ -18,7 +18,7 @@ class SequentialIds implements IdGenerator {
 }
 
 /** Reversible stand-in for the HMAC signer; the application must not care how tokens look. */
-class FakeSigner implements GrantSigner {
+export class FakeSigner implements GrantSigner {
   async sign(grant: SessionGrant): Promise<string> { return `grant:${JSON.stringify(grant.toProps())}`; }
   async verify(token: string): Promise<SessionGrant | undefined> {
     if (!token.startsWith('grant:')) return undefined;

@@ -1,7 +1,8 @@
 import type { SessionLifecycle } from '../session-lifecycle';
-import { DocumentId, ProfileId, VoiceSession, VoiceSessionId, err, ok, type AgentProfileRepository, type DocumentSessionPolicy, type Result } from '@vdoc-server/domain';
+import { DocumentId, ProfileId, VoiceSession, VoiceSessionId, err, ok, type AgentProfile, type AgentProfileRepository, type DocumentSessionPolicy, type Result } from '@vdoc-server/domain';
 import { appError, fromDomain, type AppError } from '../errors';
 import type { CallerAuthenticator, CallerCredentials, Clock, GrantSigner, IdGenerator } from '../ports';
+import { auditIdentityOf } from '../session-record';
 import type { VoiceSessionStore } from '../voice-session-store';
 import { authenticateCaller } from './caller';
 import { toView, type GrantView, type VoiceSessionView } from './views';
@@ -25,40 +26,41 @@ export class GrantVoiceSession {
   }) {}
 
   async execute(input: GrantVoiceSessionInput): Promise<Result<GrantVoiceSessionOutput, AppError>> {
-    const { store, profiles, authenticator, signer, clock, ids, admission } = this.deps;
+    const { store, lifecycle, authenticator, signer, clock, ids, admission } = this.deps;
+    const { requestId } = input.credentials;
     const principal = await authenticateCaller(authenticator, input.credentials);
     if (!principal.ok) return principal;
     const documentId = DocumentId.parse(input.documentId);
     if (!documentId.ok) return err(fromDomain(documentId.error));
-
-    let profile = await profiles.getDefault();
-    if (input.profileId !== undefined) {
-      const profileId = ProfileId.parse(input.profileId);
-      const found = profileId.ok ? await profiles.get(profileId.value) : undefined;
-      if (!found) return err(appError('NOT_FOUND', 'Unknown agent profile.'));
-      profile = found;
-    }
+    const profile = await this.resolveProfile(input.profileId);
+    if (!profile.ok) return profile;
 
     const now = clock.now();
-    const open = (await store.findUnended(documentId.value)).filter(session => session.isOpenAt(now));
-    const admitted = admission.admit(open, principal.value);
+    const admitted = admission.admit(await store.findOpen(documentId.value, now), principal.value);
     if (!admitted.ok) return err(fromDomain(admitted.error));
-    const session = VoiceSession.grant({ id: VoiceSessionId.assume(ids.next('vs')), documentId: documentId.value, principal: principal.value, profile, now });
+    const session = VoiceSession.grant({ id: VoiceSessionId.assume(ids.next('vs')), documentId: documentId.value, principal: principal.value, profile: profile.value, now });
     const grant = session.issueGrant(now);
     if (!grant.ok) return err(fromDomain(grant.error));
-    const identity = {
-      clientId: principal.value.clientId ?? principal.value.id,
-      ...(principal.value.userId ? { userId: principal.value.userId } : {}),
-      ...(input.credentials.requestId ? { requestId: input.credentials.requestId } : {}),
-    };
-    const token = await signer.sign(grant.value);
+
+    // Commit the new session before ending the ones it supersedes: a failure part-way then leaves
+    // an extra open session (ended by the next grant or its deadline), never a caller with none.
+    const committed = await lifecycle.persistAndDispatch(session, requestId, auditIdentityOf(principal.value, requestId));
+    if (!committed.ok) return committed;
     for (const superseded of admitted.value) {
       superseded.end('superseded', now);
-      const ended = await this.deps.lifecycle.persistAndDispatch(superseded, input.credentials.requestId);
+      const ended = await lifecycle.persistAndDispatch(superseded, requestId);
       if (!ended.ok) return ended;
     }
-    const committed = await this.deps.lifecycle.persistAndDispatch(session, input.credentials.requestId, identity);
-    if (!committed.ok) return committed;
+    const token = await signer.sign(grant.value);
     return ok({ session: toView(session, now), grant: { token, expiresAt: grant.value.expiresAt } });
+  }
+
+  /** The requested profile, or the default when none is named. */
+  private async resolveProfile(profileId: string | undefined): Promise<Result<AgentProfile, AppError>> {
+    const { profiles } = this.deps;
+    if (profileId === undefined) return ok(await profiles.getDefault());
+    const id = ProfileId.parse(profileId);
+    const found = id.ok ? await profiles.get(id.value) : undefined;
+    return found ? ok(found) : err(appError('NOT_FOUND', 'Unknown agent profile.'));
   }
 }

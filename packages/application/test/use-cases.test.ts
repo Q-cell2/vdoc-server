@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { alice, as, bob, connected, harness } from './fakes';
+import { FakeSigner, alice, as, bob, connected, harness } from './fakes';
 
 describe('GrantVoiceSession', () => {
   it('requires an authenticated caller and a valid document id', async () => {
@@ -22,6 +22,20 @@ describe('GrantVoiceSession', () => {
     await h.app.grantVoiceSession.execute({ credentials: as(alice), documentId: 'doc-1' });
     expect((await h.repository.get(first.sessionId as never))?.endReason).toBe('superseded');
     expect(h.connections.closed).toEqual([{ sessionId: first.sessionId, reason: 'superseded' }]);
+  });
+
+  it('signs the grant only after the new session is stored and the superseded one has ended', async () => {
+    const signer = new FakeSigner();
+    const h = harness({ signer });
+    const first = await connected(h);
+    const seen: { stored: boolean; previous: string | null | undefined }[] = [];
+    const sign = signer.sign.bind(signer);
+    signer.sign = async (grant) => {
+      seen.push({ stored: (await h.repository.get(grant.sessionId)) !== undefined, previous: (await h.repository.get(first.sessionId as never))?.endReason });
+      return sign(grant);
+    };
+    expect((await h.app.grantVoiceSession.execute({ credentials: as(alice), documentId: 'doc-1' })).ok).toBe(true);
+    expect(seen).toEqual([{ stored: true, previous: 'superseded' }]);
   });
 
   it('can reject instead, but never counts sessions that have already expired', async () => {
