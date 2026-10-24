@@ -25,6 +25,8 @@ export interface AgentProfileProps {
   readonly clientToolTimeoutMs?: number;
   /** The tool through which this agent hands requests to a worker. Sessions of agents without one cannot start worker tasks. */
   readonly handOffTool?: string;
+  /** The model of the worker behind `handOffTool`; the worker's default when absent. */
+  readonly workerModel?: string;
   /** Upper bound on recognition hints taken from the document. */
   readonly maxVocabulary: number;
   readonly limits: SessionLimits;
@@ -48,6 +50,7 @@ export class AgentProfile {
   get limits(): SessionLimits { return this.props.limits; }
   get clientToolTimeoutMs(): number | undefined { return this.props.clientToolTimeoutMs; }
   get handOffTool(): string | undefined { return this.props.handOffTool; }
+  get workerModel(): string | undefined { return this.props.workerModel; }
 
   instructionsFor(values: { language: string; documentTitle: string }): string {
     return this.props.instructions.render(values);

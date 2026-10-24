@@ -133,6 +133,21 @@ describe('ClaudeWorker', () => {
     expect(await worker.start(start('call_2'))).toMatchObject({ ok: true, value: { status: 'done', reply: 'Sorry, the assistant could not finish that.' } });
   });
 
+  it('uses the worker model the agent of the session asks for, falling back to the default', async () => {
+    const { client, requests } = fakeClaude([]);
+    const { handlers } = fakeHandlers();
+    const authorize = handlers.authorizeDelegatedTask.execute;
+    (handlers.authorizeDelegatedTask as { execute: unknown }).execute = async (input: Parameters<typeof authorize>[0]) => {
+      const result = await authorize(input);
+      return result.ok && input.sessionId === 'vs_fast' ? ok({ ...result.value, sessionId: 'vs_fast', workerModel: 'claude-sonnet-5-5' }) : result;
+    };
+    const worker = new ClaudeWorker({ apiKey: 'k', client, handlers, instructions: 'Work.', ids });
+    await worker.start({ ...start(), sessionId: 'vs_fast' });
+    await worker.start(start('call_2'));
+    expect(requests.map((request) => request['model'])).toEqual(['claude-sonnet-5-5', 'claude-opus-5-5']);
+    expect(requests[0]).toMatchObject({ fallbacks: 'default' });
+  });
+
   it('starts nothing for an unauthorized hand-off or malformed tools', async () => {
     const { client, requests } = fakeClaude([]);
     const { handlers } = fakeHandlers();

@@ -49,6 +49,8 @@ interface PendingTask {
 
 interface Conversation {
   readonly sessionId: string;
+  /** Fixed for the conversation: thinking blocks only replay on the model that wrote them. */
+  readonly model: string;
   messages: MessageParam[];
   tools: Anthropic.Beta.BetaTool[];
   task?: PendingTask;
@@ -82,8 +84,8 @@ export class ClaudeWorker implements DelegatedTaskRunner {
     if (!authorized.ok) return authorized;
     const tools = toTools(input.tools);
     if (!tools.ok) return tools;
-    const { sessionId, turnId, request } = authorized.value;
-    const conversation = this.#conversation(sessionId);
+    const { sessionId, turnId, request, workerModel } = authorized.value;
+    const conversation = this.#conversation(sessionId, workerModel ?? this.#model);
     return this.#serialize(conversation, async () => {
       // A new request while calls are out: their results will never be needed.
       if (conversation.task) this.#append(conversation, 'user', [...conversation.task.refused, ...conversation.task.calls.map((call) => errorResult(call.callId, 'SUPERSEDED', 'The user moved on to a new request.'))]);
@@ -157,9 +159,9 @@ export class ClaudeWorker implements DelegatedTaskRunner {
   }
 
   #request(conversation: Conversation): Promise<Anthropic.Beta.BetaMessage> {
-    const fallback = DEFAULT_FALLBACK_MODELS.has(this.#model);
+    const fallback = DEFAULT_FALLBACK_MODELS.has(conversation.model);
     return this.#client.beta.messages.stream({
-      model: this.#model,
+      model: conversation.model,
       max_tokens: 64_000,
       betas: ['thinking-binding-controls-2026-08-01', ...(fallback ? ['server-side-fallback-2026-07-01' as const] : [])],
       ...(fallback ? { fallbacks: 'default' as const } : {}),
@@ -173,10 +175,10 @@ export class ClaudeWorker implements DelegatedTaskRunner {
     }).finalMessage();
   }
 
-  #conversation(sessionId: string): Conversation {
+  #conversation(sessionId: string, model: string): Conversation {
     let conversation = this.#conversations.get(sessionId);
     if (!conversation) {
-      conversation = { sessionId, messages: [], tools: [], tail: Promise.resolve() };
+      conversation = { sessionId, model, messages: [], tools: [], tail: Promise.resolve() };
       this.#conversations.set(sessionId, conversation);
       while (this.#conversations.size > MAX_CONVERSATIONS) this.#conversations.delete(this.#conversations.keys().next().value!);
     }

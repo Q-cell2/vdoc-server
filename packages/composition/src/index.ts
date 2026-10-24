@@ -4,7 +4,7 @@ import { ApiKeyAuthenticator, HmacGrantSigner, TrustedUserAuthenticator } from '
 import { AuditLogPublisher, CompositeEventPublisher, JsonLogger, RandomIdGenerator, TurnMetricsPublisher, RealtimeConnectionEvents, systemClock } from '@vdoc-server/adapter-system';
 import { ClaudeWorker, RealtimeHost, type ModelRegistry, type Scheduler } from '@vdoc-server/adapter-vrt';
 import { createApplication, type Application, type Clock, type CommandRunner, type EventPublisher, type SessionRepository } from '@vdoc-server/application';
-import { WORKER_INSTRUCTIONS, editingAssistantProfile, webSearchAssistantProfile, workerSpeakerProfile, type ServerConfig } from '@vdoc-server/config';
+import { WORKER_INSTRUCTIONS, editingAssistantProfile, fastWorkerSpeakerProfile, webSearchAssistantProfile, workerSpeakerProfile, type ServerConfig } from '@vdoc-server/config';
 import { DocumentSessionPolicy, ProfileId, RiskAssessor, defaultToolPolicy } from '@vdoc-server/domain';
 
 /** What differs between runtimes; everything else is built here once. */
@@ -40,12 +40,13 @@ export async function createServer(parts: ServerParts): Promise<Server> {
   if (!parts.models.has(config.model.provider)) throw new Error(`The configured model provider "${config.model.provider}" is not registered.`);
 
   const profile = editingAssistantProfile(config.model, config.limits);
-  // Reasoning effort: low is the realtime model searching by itself, high is the worker-speaker split.
+  // Reasoning effort: low is the realtime model searching by itself; medium and high are the
+  // worker-speaker split, with a faster or the default worker model.
   const anthropicKey = config.providerKeys.anthropic;
   const profiles = new InMemoryAgentProfileRepository([
     profile,
     webSearchAssistantProfile(config.model, config.limits),
-    ...(anthropicKey ? [workerSpeakerProfile(config.model, config.limits)] : []),
+    ...(anthropicKey ? [workerSpeakerProfile(config.model, config.limits), fastWorkerSpeakerProfile(config.model, config.limits, config.fastWorkerModel)] : []),
   ], ProfileId.assume(profile.id));
   const [signer, applications] = await Promise.all([HmacGrantSigner.create(config.signingKeys), ApiKeyAuthenticator.create(config.clients)]);
 

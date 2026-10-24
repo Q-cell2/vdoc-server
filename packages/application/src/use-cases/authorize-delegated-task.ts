@@ -19,6 +19,8 @@ export interface DelegatedTask {
   readonly turnId: string;
   /** What the user wants, in the speaker's words. */
   readonly request: string;
+  /** The worker model the session's agent asks for, if any. */
+  readonly workerModel?: string;
 }
 
 /**
@@ -40,6 +42,6 @@ export class AuthorizeDelegatedTask {
     if (typeof request !== 'string' || request.trim() === '') return err(appError('INVALID_INPUT', 'The hand-off has no request.'));
     const turn = session.value.delegatedTurn(input.callId, { name: profile.handOffTool, arguments: input.arguments }, this.deps.clock.now());
     if (!turn.ok) return err(fromDomain(turn.error));
-    return ok({ sessionId: session.value.id, turnId: turn.value, request });
+    return ok({ sessionId: session.value.id, turnId: turn.value, request, ...(profile.workerModel ? { workerModel: profile.workerModel } : {}) });
   }
 }

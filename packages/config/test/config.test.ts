@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { VDOC_RISK_TABLE } from '@vdoc-server/domain';
-import { ASK_ASSISTANT, LATE_RESULT_PREFIX, VDOC_TOOLS, WORKER_INSTRUCTIONS, editingAssistantProfile, loadConfig, webSearchAssistantProfile, workerSpeakerProfile } from '../src';
+import { ASK_ASSISTANT, DEFAULT_FAST_WORKER_MODEL, LATE_RESULT_PREFIX, VDOC_TOOLS, WORKER_INSTRUCTIONS, editingAssistantProfile, fastWorkerSpeakerProfile, loadConfig, webSearchAssistantProfile, workerSpeakerProfile } from '../src';
 
 const KEY = 'k'.repeat(40);
 
@@ -49,6 +49,8 @@ describe('loadConfig', () => {
   it('takes an optional Claude model for the worker', () => {
     expect(loadConfig({ VDOC_SERVER_WORKER_MODEL: 'claude-sonnet-5-5' })).toMatchObject({ ok: true, value: { workerModel: 'claude-sonnet-5-5' } });
     expect(loadConfig({ VDOC_SERVER_WORKER_MODEL: 'gpt-5' }).ok).toBe(false);
+    expect(loadConfig({ VDOC_SERVER_WORKER_FAST_MODEL: 'claude-haiku-5-5' })).toMatchObject({ ok: true, value: { fastWorkerModel: 'claude-haiku-5-5' } });
+    expect(loadConfig({ VDOC_SERVER_WORKER_FAST_MODEL: 'fast' }).ok).toBe(false);
   });
 
   it('runs cascade-claude only with both the Anthropic key and the OpenAI speech key', () => {
@@ -115,5 +117,14 @@ describe('reasoning effort profiles', () => {
     expect(WORKER_INSTRUCTIONS).toContain('Read before you edit');
     expect(WORKER_INSTRUCTIONS).toContain('Search the web before writing any facts');
     expect(WORKER_INSTRUCTIONS).not.toContain('{{');
+  });
+
+  it('medium effort: the same speaker, with a faster worker model', () => {
+    const fast = fastWorkerSpeakerProfile({ provider: 'boson' }, limits);
+    expect(fast).toMatchObject({ id: 'worker-speaker-fast', handOffTool: ASK_ASSISTANT, workerModel: DEFAULT_FAST_WORKER_MODEL });
+    expect(DEFAULT_FAST_WORKER_MODEL).toBe('claude-sonnet-5-5');
+    expect(fastWorkerSpeakerProfile({ provider: 'boson' }, limits, 'claude-haiku-5-5').workerModel).toBe('claude-haiku-5-5');
+    expect(workerSpeakerProfile({ provider: 'boson' }, limits).workerModel).toBeUndefined();
+    expect(fast.instructionsFor({ language: 'zh-CN', documentTitle: 'N' })).toBe(workerSpeakerProfile({ provider: 'boson' }, limits).instructionsFor({ language: 'zh-CN', documentTitle: 'N' }));
   });
 });

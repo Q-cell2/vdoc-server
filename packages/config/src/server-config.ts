@@ -15,6 +15,8 @@ export interface ServerConfig {
   readonly model: ModelChoice;
   /** The Claude model behind the worker-speaker profile, which runs only with `providerKeys.anthropic`. */
   readonly workerModel?: string;
+  /** The quicker worker model behind the medium-effort profile. */
+  readonly fastWorkerModel?: string;
   readonly providerKeys: { readonly boson?: string; readonly openai?: string; readonly anthropic?: string };
   readonly concurrency: ConcurrencyStrategy;
   readonly limits: SessionLimits;
@@ -83,6 +85,8 @@ export function loadConfig(env: Env): { ok: true; value: ServerConfig } | { ok: 
   const model: ModelChoice = { provider: provider ?? 'fake', ...(modelName ? { model: modelName } : {}) };
   const workerModel = env.VDOC_SERVER_WORKER_MODEL;
   if (workerModel !== undefined && !/^claude-[a-z0-9.-]+$/.test(workerModel)) errors.push('VDOC_SERVER_WORKER_MODEL must be a Claude model id (for example claude-opus-5-5).');
+  const fastWorkerModel = env.VDOC_SERVER_WORKER_FAST_MODEL;
+  if (fastWorkerModel !== undefined && !/^claude-[a-z0-9.-]+$/.test(fastWorkerModel)) errors.push('VDOC_SERVER_WORKER_FAST_MODEL must be a Claude model id (for example claude-sonnet-5-5).');
 
   const concurrency = env.VDOC_SERVER_CONCURRENCY ?? 'supersede';
   if (concurrency !== 'supersede' && concurrency !== 'reject') errors.push('VDOC_SERVER_CONCURRENCY must be "supersede" or "reject".');
@@ -102,7 +106,7 @@ export function loadConfig(env: Env): { ok: true; value: ServerConfig } | { ok: 
   return {
     ok: true,
     value: {
-      environment, allowClientOnly, logLevel: logLevel as ServerConfig['logLevel'], signingKeys, clients, allowedOrigins, model, ...(workerModel ? { workerModel } : {}), providerKeys,
+      environment, allowClientOnly, logLevel: logLevel as ServerConfig['logLevel'], signingKeys, clients, allowedOrigins, model, ...(workerModel ? { workerModel } : {}), ...(fastWorkerModel ? { fastWorkerModel } : {}), providerKeys,
       concurrency: concurrency as ConcurrencyStrategy, limits: limits.value, generated,
     },
   };

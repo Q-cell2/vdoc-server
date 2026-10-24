@@ -115,15 +115,28 @@ export function webSearchAssistantProfile(model: ModelChoice, limits: SessionLim
   });
 }
 
+/** The worker model of the medium-effort profile: quicker than the deployment's default worker. */
+export const DEFAULT_FAST_WORKER_MODEL = 'claude-sonnet-5-5';
+
 /**
  * High reasoning effort, the worker-speaker split: the realtime model only talks
  * and hands every request to a worker through `ask_assistant`. The worker's
  * document tool calls are reviewed under this profile, so it allows both.
+ * `workerModel` picks the worker's Claude model; the worker's default when absent.
  */
-export function workerSpeakerProfile(model: ModelChoice, limits: SessionLimits): AgentProfile {
+export function workerSpeakerProfile(model: ModelChoice, limits: SessionLimits, workerModel?: string): AgentProfile {
+  return speakerProfile('worker-speaker', 'Speaker with a worker', model, limits, workerModel);
+}
+
+/** Medium reasoning effort: the same split with a faster worker model. */
+export function fastWorkerSpeakerProfile(model: ModelChoice, limits: SessionLimits, workerModel = DEFAULT_FAST_WORKER_MODEL): AgentProfile {
+  return speakerProfile('worker-speaker-fast', 'Speaker with a fast worker', model, limits, workerModel);
+}
+
+function speakerProfile(id: string, name: string, model: ModelChoice, limits: SessionLimits, workerModel: string | undefined): AgentProfile {
   return new AgentProfile({
-    id: ProfileId.assume('worker-speaker'),
-    name: 'Speaker with a worker',
+    id: ProfileId.assume(id),
+    name,
     model,
     ...(model.provider === 'boson' ? { voice: 'default' } : {}),
     turnDetection: 'semantic',
@@ -132,6 +145,7 @@ export function workerSpeakerProfile(model: ModelChoice, limits: SessionLimits):
     allowedTools: [ASK_ASSISTANT, ...VDOC_TOOLS],
     clientToolTimeoutMs: ASK_ASSISTANT_TIMEOUT_MS,
     handOffTool: ASK_ASSISTANT,
+    ...(workerModel ? { workerModel } : {}),
     maxVocabulary: 50,
     limits,
   });

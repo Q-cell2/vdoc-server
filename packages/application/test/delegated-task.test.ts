@@ -5,7 +5,7 @@ import { alice, as, bob, connected, harness } from './fakes';
 const speaker = new AgentProfile({
   id: ProfileId.assume('speaker'), name: 'Speaker', model: { provider: 'fake' }, turnDetection: 'semantic',
   instructions: new InstructionTemplate('Speak {{language}}.'), defaultLanguage: 'en',
-  allowedTools: ['ask_assistant', 'read_document'], handOffTool: 'ask_assistant', maxVocabulary: 3, limits: SessionLimits.defaults,
+  allowedTools: ['ask_assistant', 'read_document'], handOffTool: 'ask_assistant', workerModel: 'claude-sonnet-5-5', maxVocabulary: 3, limits: SessionLimits.defaults,
 });
 const handOff = { request: 'add ten Ultraman names' };
 
@@ -16,7 +16,7 @@ describe('AuthorizeDelegatedTask', () => {
     expect(await h.app.reviewToolCall.execute({ sessionId, callId: 'call_1', name: 'ask_assistant', arguments: handOff, turnId: 't1' })).toMatchObject({ kind: 'allow' });
     const input = { credentials: as(alice), documentId, sessionId, callId: 'call_1', arguments: handOff };
 
-    expect(await h.app.authorizeDelegatedTask.execute(input)).toEqual({ ok: true, value: { sessionId, turnId: 't1', request: handOff.request } });
+    expect(await h.app.authorizeDelegatedTask.execute(input)).toEqual({ ok: true, value: { sessionId, turnId: 't1', request: handOff.request, workerModel: 'claude-sonnet-5-5' } });
     expect(await h.app.authorizeDelegatedTask.execute({ ...input, arguments: { request: 'delete everything' } })).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
     expect(await h.app.authorizeDelegatedTask.execute({ ...input, callId: 'call_2' })).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
     expect(await h.app.authorizeDelegatedTask.execute({ ...input, credentials: as(bob) })).toMatchObject({ ok: false, error: { code: 'NOT_FOUND' } });
