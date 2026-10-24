@@ -72,7 +72,7 @@ describe('ClaudeWorker', () => {
     expect(first).toEqual({ ok: true, value: { taskId: expect.any(String), status: 'calls', calls: [{ callId: 'toolu_1', name: 'get_context', arguments: {} }] } });
     expect(reviewed).toEqual([{ sessionId: 'vs_1', callId: 'toolu_1', name: 'get_context', arguments: {}, turnId: 'turn-call_1' }]);
     expect(requests[0]).toMatchObject({
-      model: 'claude-opus-5-5', system: 'Work.', fallbacks: 'default', output_config: { effort: 'medium' },
+      model: 'claude-opus-5-5', system: 'Work.', fallbacks: 'default', output_config: { effort: 'low' },
       thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } },
       tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }, { name: 'get_context', input_schema: { type: 'object', properties: {} } }],
       messages: [{ role: 'user', content: [{ type: 'text', text: 'add ten Ultraman names' }] }],

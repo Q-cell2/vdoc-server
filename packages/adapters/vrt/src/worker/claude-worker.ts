@@ -167,7 +167,8 @@ export class ClaudeWorker implements DelegatedTaskRunner {
       ...(fallback ? { fallbacks: 'default' as const } : {}),
       // Trimming old exchanges edits the history; drop thinking that no longer matches instead of failing.
       thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } },
-      output_config: { effort: 'medium' },
+      // Low effort for both worker models: the user is waiting on a voice reply.
+      output_config: { effort: 'low' },
       cache_control: { type: 'ephemeral' },
       system: this.options.instructions,
       tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }, ...conversation.tools],
