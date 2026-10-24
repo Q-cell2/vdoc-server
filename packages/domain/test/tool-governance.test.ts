@@ -12,6 +12,7 @@ describe('RiskAssessor', () => {
     expect(assessor.assess(call('apply_document_operations', ops('table.edit:deleteTable'))).risk).toBe('high');
     expect(assessor.assess(call('apply_document_operations', ops('table.edit:rowAfter'))).risk).toBe('low');
     expect(assessor.assess(call('apply_document_operations', ops('text.findReplace'))).risk).toBe('high');
+    expect(assessor.assess(call('apply_document_operations', ops('text.styleMatches'))).risk).toBe('low');
   });
 
   it('rates deleting one block like deleting its text, and deleting several as high', () => {

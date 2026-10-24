@@ -36,6 +36,8 @@ export const VDOC_RISK_TABLE: OperationRiskTable = Object.freeze<OperationRiskTa
     'text.delete': 'medium', 'text.replace': 'medium', 'text.clear': 'medium', 'block.move': 'medium',
     'table.edit:deleteRow': 'medium', 'table.edit:deleteColumn': 'medium', 'table.sort': 'medium', 'table.move': 'medium',
     'document.layout': 'medium', 'document.language': 'medium',
+    // Adds or removes marks on matched text; never changes the text itself, however many matches.
+    'text.styleMatches': 'low',
     'text.style': 'low', 'text.toggle': 'low', 'text.insert': 'low', 'format.apply': 'low', 'link.set': 'low', 'link.unset': 'low',
     'paragraph.style': 'low', 'paragraph.indent': 'low', 'paragraph.adjustIndent': 'low', 'paragraph.border': 'low',
     'list.toggle': 'low', 'list.style': 'low', 'list.marker': 'low', 'list.indent': 'low', 'list.restart': 'low', 'list.continue': 'low', 'list.checklistStyle': 'low',
