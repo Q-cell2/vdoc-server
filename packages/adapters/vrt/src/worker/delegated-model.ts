@@ -8,6 +8,9 @@ export function finishWorkerSpeech(session: RealtimeSession, id: string): boolea
   const finish = speechControls.get(session); if (!finish) return false; finish(id); return true;
 }
 export const WORKER_STARTED_TEXT = '[执行阶段] Pi 已启动，正在等待模型输出。\n';
+/** What happened to words spoken while a task ran, sent as one text line for the page to show and not read aloud. */
+export type InterjectionOutcome = 'added' | 'restarted' | 'replaced' | 'stopped';
+export const INTERJECTION_PREFIX = '[interjection] ';
 
 /** Higgs only listens and speaks; the server starts Pi itself, so Higgs never decides whether a request runs. */
 const SPEAKER_INSTRUCTIONS = `You are only the voice of a document assistant. You never answer, decide or act on your own.
@@ -27,6 +30,7 @@ Put long articles in insert_structured_article arguments, not in spoken text. Ne
 When one change applies to many places (for example highlight every mention of a word), send ONE apply_document_operations call that lists every operation. Never send one call per place or several calls at once: each successful call changes the document revision, so the others fail as stale.
 For partial deletion, read the document and use delete_test_blocks when available with exactly the requested stable block ids. Never use undo_turn to approximate deleting only part of an article: undo affects the entire prior edit.
 While you work, the user may speak again. That arrives as a message {"userUpdate": "..."}: their latest words about the current task. If it repeats or confirms the task, continue without redoing completed steps. If it adds or corrects details, follow it. If it asks to stop or cancel, make no further changes and say so briefly.
+The task envelope may also carry userUpdates: words the user added to this same request before you started. Apply them to userRequest; the latest wins where they conflict.
 Some edits need the user's confirmation first: the tool result then asks you to confirm. Ask in one short sentence and finish.
 Each task is new, so previousTasks carries that call as awaitingConfirmation. If the user now agrees, first read the document, then make exactly that call again with identical arguments (only expectedSessionId/expectedRevision may change). If they decline or ask for something else, do not make it.
 If tools fail, say what failed. Do not invent web sources or claim research: only tools actually provided are available.
@@ -41,6 +45,10 @@ interface Run {
   completedWrites: number;
   pending: Map<string, PendingTool>;
   request: string;
+  /** Words the user added to this task, oldest first. */
+  updates: string[];
+  /** An interjection outcome waiting for the run's next response to carry it. */
+  notice?: InterjectionOutcome;
   timer: ReturnType<typeof setTimeout>;
   steer?: (message: string) => void;
   /** The last call the governance policy held back until the user confirms it. */
@@ -139,10 +147,11 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
         emit({ type: 'response.end', responseId, status: stopReason === 'failed' ? 'failed' : 'done', stopReason });
       };
       /** Speaks a fixed text through Higgs without running Pi. */
-      const say = (text: string) => {
+      const say = (text: string, outcome?: InterjectionOutcome) => {
         pendingReply = text;
         const responseId = `say-${crypto.randomUUID()}`;
         emit({ type: 'response.start', responseId });
+        if (outcome) emit({ type: 'output.text', responseId, delta: `${INTERJECTION_PREFIX}${outcome}\n` });
         emit({ type: 'output.text', responseId, delta: text });
         emit({ type: 'response.end', responseId, status: 'done', stopReason: 'pause' });
       };
@@ -164,6 +173,12 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
         emit({ type: 'error', error: new Error(run.completedWrites ? `WORKER_FAILED_AFTER_WRITE: 已有 ${run.completedWrites} 次文档操作成功，后续生成失败或超时。请核对文档；不要直接重做整项操作。` : 'WORKER_FAILED: Pi 生成失败或超过执行时限，尚无已确认成功的文档修改。请重试或缩小任务。'), recoverable: true });
         emit({ type: 'response.end', responseId, status: 'failed', stopReason: 'failed' });
       };
+      /** Tells the page what became of an interjection; between Pi's responses it waits for the next one. */
+      const tell = (run: Run, outcome: InterjectionOutcome) => {
+        if (!run.responseId) { run.notice = outcome; return; }
+        delete run.notice;
+        emit({ type: 'output.text', responseId: run.responseId, delta: `${INTERJECTION_PREFIX}${outcome}\n` });
+      };
       const workerEvent = (run: Run, event: WorkerEvent) => {
         if (!live(run)) return;
         if (event.type === 'start') {
@@ -171,6 +186,7 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
             run.responseId = `worker-${crypto.randomUUID()}`;
             emit({ type: 'response.start', responseId: run.responseId });
           }
+          if (run.notice) tell(run, run.notice);
           run.dispatched = 0;
         } else if (run.responseId) {
           if (event.type === 'text') emit({ type: 'output.text', responseId: run.responseId, delta: event.delta });
@@ -182,19 +198,20 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
           }
         }
       };
-      /** Starts Pi on the user's own words. Nothing else decides whether a request runs. */
-      const begin = (text: string) => {
+      /** Starts Pi on the user's own words, with any they added before it started. Nothing else decides whether a request runs. */
+      const begin = (text: string, updates: string[] = [], outcome?: InterjectionOutcome) => {
         const request = text.trim();
         if (!request || active || closed) return;
         clearTranscriptTimer(); stopEndingAudio(); speechPending = false; manuallyFinished = false;
         lastCompletedWrites = 0;
         const controller = new AbortController();
-        const run: Run = { controller, request, dispatched: 0, completedWrites: 0, pending: new Map(), timer: setTimeout(() => fail(run), timeoutMs), document: {} };
+        const run: Run = { controller, request, updates, dispatched: 0, completedWrites: 0, pending: new Map(), timer: setTimeout(() => fail(run), timeoutMs), document: {} };
         active = run;
         run.responseId = `worker-${crypto.randomUUID()}`;
         emit({ type: 'response.start', responseId: run.responseId });
         emit({ type: 'output.text', responseId: run.responseId, delta: WORKER_STARTED_TEXT });
-        const prompt = JSON.stringify({ previousTasks: history, userRequest: request, requestSource: inputKind === 'text' ? 'typed' : 'final-transcript' });
+        if (outcome) tell(run, outcome);
+        const prompt = JSON.stringify({ previousTasks: history, userRequest: request, ...(updates.length ? { userUpdates: updates } : {}), requestSource: inputKind === 'text' ? 'typed' : 'final-transcript' });
         const tools = config.tools ?? [];
         void worker.run({ instructions: `${config.instructions ?? ''}\n\n${WORKER_INSTRUCTIONS}`, prompt, tools }, {
           signal: controller.signal,
@@ -248,25 +265,30 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
       const maybeBegin = () => {
         if (inputKind === 'voice' && speechEnded && lastUserText.trim() && !active && pendingReply === undefined && !speech) begin(lastUserText);
       };
-      /** Words spoken during a task: steer it, or stop it (and start them as a new task). */
+      /** Words spoken during a task: add them to it, or stop it (and start them as a new task). */
       const decide = async (run: Run, text: string) => {
+        // Without a judge the words cannot be told apart, so they stay with the running task.
         const intent: UtteranceIntent = quickIntent(text)
-          ?? (judge ? await judge.judge(run.request, text, run.controller.signal).catch(() => 'continue' as const) : 'continue');
+          ?? (judge ? await judge.judge(run.request, text, run.controller.signal).catch(() => 'replace' as const) : 'continue');
         if (closed) return;
-        if (intent === 'continue') {
-          if (live(run)) run.steer?.(JSON.stringify({ userUpdate: text.slice(0, 2000) }));
-          return;
-        }
         // A newer task that started meanwhile is not the one these words were about.
         if (active && active !== run) return;
+        const update = text.slice(0, 2000);
+        // Until something is written, starting over with the words costs only reads, and they take
+        // effect at once instead of after Pi's current response (a whole article can take a while).
+        const unwritten = !run.completedWrites && ![...run.pending.values()].some(entry => WRITE_TOOLS.includes(entry.name));
+        if (intent === 'continue' && !(live(run) && unwritten)) {
+          if (live(run)) { run.updates.push(update); run.steer?.(JSON.stringify({ userUpdate: update })); tell(run, 'added'); }
+          return;
+        }
         const speaking = speech !== undefined;
         stop(); if (speaking) performer.cancel();
-        inputKind = 'voice'; lastUserText = intent === 'replace' ? text : ''; speechEnded = true;
+        inputKind = 'voice'; lastUserText = intent === 'stop' ? '' : text; speechEnded = true;
         // The held-back utterance now reaches the runtime, which ends the old turn as interrupted.
         emit({ type: 'input.speech.start', atMs: 0 });
         emit({ type: 'input.speech.end', atMs: 0 });
-        if (intent === 'replace') begin(text);
-        else say(/[㐀-鿿]/.test(text) ? '好的，已停止。' : 'OK, stopped.');
+        if (intent === 'stop') { say(/[㐀-鿿]/.test(text) ? '好的，已停止。' : 'OK, stopped.', 'stopped'); return; }
+        if (intent === 'replace') begin(text, [], 'replaced'); else begin(run.request, [...run.updates, update], 'restarted');
       };
 
       function listen<T extends EventType>(type: T, listener: (event: EventOf<T>) => void) { unsubscribers.push(performer.on(type, listener)); }
@@ -303,7 +325,7 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
         if (!event.final) return;
         const text = event.text.trim();
         // A further segment of the same utterance while Pi already works on it is more detail for Pi.
-        if (active) { if (text) active.steer?.(JSON.stringify({ userUpdate: text.slice(0, 2000) })); return; }
+        if (active) { if (text) { active.updates.push(text.slice(0, 2000)); active.steer?.(JSON.stringify({ userUpdate: text.slice(0, 2000) })); } return; }
         if (pendingReply !== undefined || speech) return;
         lastUserText = text;
         if (!text) {

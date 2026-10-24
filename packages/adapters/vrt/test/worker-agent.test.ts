@@ -1,4 +1,4 @@
-import { finishWorkerSpeech, READ_ALOUD_PREFIX, WORKER_STARTED_TEXT } from '../src/worker/delegated-model';
+import { finishWorkerSpeech, INTERJECTION_PREFIX, READ_ALOUD_PREFIX, WORKER_STARTED_TEXT } from '../src/worker/delegated-model';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createAssistantMessageEventStream, type AssistantMessage } from '@earendil-works/pi-ai';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
@@ -62,6 +62,7 @@ async function setup(worker: WorkerRunner, options: { beforeToolCall?: (name: st
   const model = delegatedModel(actor, worker, options.timeout ?? 1000, options.transcriptTimeout ?? 1000, options.judge);
   const calls: { name: string; callId: string; args: unknown }[] = [];
   const text: string[] = [];
+  const notices: string[] = [];
   const voice: string[] = [];
   const errors: string[] = [];
   const ended = vi.fn();
@@ -80,11 +81,14 @@ async function setup(worker: WorkerRunner, options: { beforeToolCall?: (name: st
     calls.push({ name: call.name, callId: call.callId, args: call.arguments });
     if (options.finishTools !== false) session.submitClientToolResult(call.callId, { ok: true, output: { ok: true, revision: 7 } });
   });
-  session.on('text', event => { if (!event.delta.startsWith('[执行阶段]')) text.push(event.delta); });
+  session.on('text', event => {
+    if (event.delta.startsWith(INTERJECTION_PREFIX)) notices.push(event.delta.slice(INTERJECTION_PREFIX.length).trim());
+    else if (!event.delta.startsWith('[执行阶段]')) text.push(event.delta);
+  });
   session.on('transcript', event => { if (event.role === 'agent' && !event.final) voice.push(event.text); });
   session.on('error', event => errors.push(event.error.message));
   if (options.text !== null) session.sendText(options.text ?? '请读取文档并写入一篇完整文章');
-  return { actor, session, calls, text, voice, errors, ended };
+  return { actor, session, calls, text, notices, voice, errors, ended };
 }
 /** Server-VAD voice input: the provider reports the utterance and its final transcript. */
 function speakTo(actor: FakeModel, words: string, itemId = 'utterance') {
@@ -356,16 +360,16 @@ it('ends the task on a fatal voice error and reports it', async () => {
   expect(h.errors).toContain('Authentication failed');
 });
 
-it('keeps Pi running when the user speaks mid-task and hands it the words as an update', async () => {
-  let release!: () => void;
+it('keeps Pi running when the user speaks after it has written, and hands it the words as an update', async () => {
+  let release: (() => void) | undefined;
   let aborted = false;
   const updates: string[] = [];
   const worker: WorkerRunner = { run: async (_request, context) => {
     context.emit({ type: 'start' });
     context.signal.addEventListener('abort', () => { aborted = true; });
     context.onSteer?.(message => updates.push(message));
-    await new Promise<void>(resolve => { release = resolve; });
     await context.execute('write', 'insert_structured_article', { expectedRevision: 7 });
+    await new Promise<void>(resolve => { release = resolve; });
     context.emit({ type: 'turn-end', usage: { inputTokens: 1, outputTokens: 1 } });
     context.emit({ type: 'start' }); context.emit({ type: 'text', delta: '已删除第二部分' }); return '已删除第二部分';
   } };
@@ -380,9 +384,10 @@ it('keeps Pi running when the user speaks mid-task and hands it the words as an 
   h.actor.session.emit({ type: 'input.transcript', itemId: 'repeat', text: ' Delete the second part. ', final: true });
   expect(aborted).toBe(false);
   expect(updates).toEqual([JSON.stringify({ userUpdate: 'Delete the second part.' })]);
+  expect(h.notices).toEqual(['added']);
   expect(transcripts).toContain(' Delete the second part. ');
   expect(h.actor.session.commandsOf('cancel')).toHaveLength(1);
-  release();
+  release!();
   await expect.poll(() => h.ended.mock.calls.length).toBe(1);
   expect(h.text.join('')).toBe('已删除第二部分');
   expect(h.calls.map(call => call.name)).toEqual(['insert_structured_article']);
@@ -420,6 +425,7 @@ it('stops the running task at once when the user says stop, says so, and starts 
   expect(judge.judge).not.toHaveBeenCalled();
   expect(interrupted).toHaveBeenCalled();
   await expect.poll(() => h.voice).toEqual(['好的，已停止。']);
+  expect(h.notices).toEqual(['stopped']);
   expect(runs).toBe(1);
   expect(h.errors).toEqual([]);
 });
@@ -441,19 +447,41 @@ it('replaces the running task when the words ask to redo it or for a new task', 
   expect(judge.judge).toHaveBeenCalledWith('请读取文档并写入一篇完整文章', '重写，改成写关于火星的', expect.any(AbortSignal));
   expect(prompts).toHaveLength(2);
   expect(JSON.parse(prompts[1]!)).toMatchObject({ userRequest: '重写，改成写关于火星的', requestSource: 'final-transcript' });
+  expect(h.notices).toEqual(['replaced']);
   expect(h.errors).toEqual([]);
 });
 
-it('hands words the judge calls a continuation to the running task', async () => {
-  const updates: string[] = [];
-  let aborted = false;
-  let started = false;
-  const h = await setup(hanging(context => { started = true; context.signal.addEventListener('abort', () => { aborted = true; }); context.onSteer?.(message => updates.push(message)); }), { judge: { judge: async () => 'continue' } });
-  await expect.poll(() => started).toBe(true);
+it('restarts a task that has written nothing yet with a continuation, so the words apply at once', async () => {
+  const prompts: string[] = [];
+  let oldAborted = false;
+  const worker: WorkerRunner = { run: async (request, context) => {
+    prompts.push(request.prompt); context.emit({ type: 'start' });
+    if (prompts.length === 1) { context.signal.addEventListener('abort', () => { oldAborted = true; }); return new Promise(() => {}); }
+    context.emit({ type: 'text', delta: '已写入' }); return '已写入';
+  } };
+  const h = await setup(worker, { judge: { judge: async () => 'continue' } });
+  await expect.poll(() => prompts.length).toBe(1);
   h.actor.session.emit({ type: 'input.speech.start', atMs: 10 });
   h.actor.session.emit({ type: 'input.transcript', itemId: 'detail', text: '再加一段结论', final: true });
-  await expect.poll(() => updates).toEqual([JSON.stringify({ userUpdate: '再加一段结论' })]);
-  expect(aborted).toBe(false);
+  await expect.poll(() => h.text.join('')).toBe('已写入');
+  expect(oldAborted).toBe(true);
+  expect(JSON.parse(prompts[1]!)).toMatchObject({ userRequest: '请读取文档并写入一篇完整文章', userUpdates: ['再加一段结论'] });
+  expect(h.notices).toEqual(['restarted']);
+  expect(h.errors).toEqual([]);
+});
+it('restarts on a new request when the judge cannot answer', async () => {
+  const prompts: string[] = [];
+  const worker: WorkerRunner = { run: async (request, context) => {
+    prompts.push(request.prompt); context.emit({ type: 'start' });
+    if (prompts.length === 1) { await context.execute('write', 'insert_structured_article', { expectedRevision: 7 }); return new Promise(() => {}); }
+    context.emit({ type: 'text', delta: '好' }); return '好';
+  } };
+  const h = await setup(worker, { judge: { judge: async () => { throw new Error('down'); } } });
+  await expect.poll(() => h.calls.length).toBe(1);
+  speakTo(h.actor, '把标题改成蓝色', 'new');
+  await expect.poll(() => prompts.length).toBe(2);
+  expect(JSON.parse(prompts[1]!)).toMatchObject({ userRequest: '把标题改成蓝色' });
+  expect(h.notices).toEqual(['replaced']);
 });
 
 it('lets real Pi read a mid-task update before its next model request', async () => {

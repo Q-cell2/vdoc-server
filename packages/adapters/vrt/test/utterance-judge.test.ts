@@ -16,13 +16,19 @@ it('leaves longer sentences that merely contain a stop word to the model', () =>
   expect(quickIntent('先别停，继续写')).toBeUndefined();
   expect(quickIntent("don't stop")).toBeUndefined();
 });
-it.each([['replace', 'replace'], ['Stop.', 'stop'], ['continue', 'continue'], ['maybe', 'continue']])('reads the model answer "%s" as %s', async (answer, intent) => {
+it.each(['嗯', '好的。', 'OK', '继续'])('keeps the task on filler "%s" without a model call', async words => {
+  expect(quickIntent(words)).toBe('continue');
+  const completeFn = vi.fn();
+  expect(await createUtteranceJudge({ apiKey: 'k', completeFn }).judge('写文章', words, signal)).toBe('continue');
+  expect(completeFn).not.toHaveBeenCalled();
+});
+it.each([['replace', 'replace'], ['Stop.', 'stop'], ['continue', 'continue'], ['maybe', 'replace']])('reads the model answer "%s" as %s', async (answer, intent) => {
   const completeFn = vi.fn(async (_context: unknown, _signal: AbortSignal) => reply(answer));
   expect(await createUtteranceJudge({ apiKey: 'k', completeFn }).judge('写文章', '重写一篇', signal)).toBe(intent);
   expect(JSON.stringify(completeFn.mock.calls[0]![0])).toContain('重写一篇');
 });
-it('keeps the task running when the model call fails or times out', async () => {
-  expect(await createUtteranceJudge({ apiKey: 'k', completeFn: async () => { throw new Error('down'); } }).judge('写文章', '换一个', signal)).toBe('continue');
+it('acts on the new words when the model call fails or times out', async () => {
+  expect(await createUtteranceJudge({ apiKey: 'k', completeFn: async () => { throw new Error('down'); } }).judge('写文章', '换一个', signal)).toBe('replace');
   const slow = createUtteranceJudge({ apiKey: 'k', timeoutMs: 10, completeFn: (_context, aborted) => new Promise((_resolve, reject) => aborted.addEventListener('abort', () => reject(new Error('timeout')))) });
-  expect(await slow.judge('写文章', '换一个', signal)).toBe('continue');
+  expect(await slow.judge('写文章', '换一个', signal)).toBe('replace');
 });
