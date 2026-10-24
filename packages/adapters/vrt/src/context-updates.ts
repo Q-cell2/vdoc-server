@@ -1,3 +1,4 @@
+import { finishWorkerSpeech } from './worker/delegated-model';
 import { toSessionConfig } from './session-config';
 import type { AgentSessionSettings, AppError } from '@vdoc-server/application';
 import type { Result } from '@vdoc-server/domain';
@@ -16,6 +17,10 @@ export class ContextUpdates {
   ) {}
 
   add(model: RealtimeSession): void { if (!this.#closed) this.#models.add(model); }
+  finishSpeech(id: string): boolean {
+    if (this.#closed || this.#models.size !== 1) return false;
+    return finishWorkerSpeech([...this.#models][0]!, id);
+  }
   remove(model: RealtimeSession): void { this.#models.delete(model); }
 
   /** Retain only the latest pending snapshot while a slow provider finishes its current update. */

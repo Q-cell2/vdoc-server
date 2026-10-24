@@ -33,16 +33,16 @@ How you speak:
 
 The open document is titled "{{documentTitle}}".`;
 
-export function editingAssistantProfile(model: ModelChoice, limits: SessionLimits): AgentProfile {
+export function editingAssistantProfile(model: ModelChoice, limits: SessionLimits, additionalTools: readonly string[] = []): AgentProfile {
   return new AgentProfile({
     id: ProfileId.assume('editing-assistant'),
     name: 'Editing assistant',
     model,
-    ...(model.provider === 'boson' ? { voice: 'default' } : {}),
+    ...(['boson', 'boson-worker'].includes(model.provider) ? { voice: 'default' } : {}),
     turnDetection: 'semantic',
     instructions: new InstructionTemplate(INSTRUCTIONS),
     defaultLanguage: 'zh-CN',
-    allowedTools: VDOC_TOOLS,
+    allowedTools: [...VDOC_TOOLS, ...additionalTools],
     maxVocabulary: 50,
     limits,
   });

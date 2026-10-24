@@ -212,3 +212,17 @@ describe('SQLite Durable Objects in real workerd', () => {
     expect((await stub.inspect(sessionId)).alarm).toBeNull();
   });
 });
+
+
+it('initializes Pi worker mode inside real workerd without Node globals or provider network calls', async () => {
+  const workerRuntime = new Miniflare(convertV4MiniflareOptions({ ...options, name: 'pi-worker-runtime',
+    bindings: { VDOC_SERVER_ENV: 'test', VDOC_SERVER_MODEL: 'boson-worker', VDOC_SERVER_LOG_LEVEL: 'error',
+      VDOC_SERVER_CLIENTS: `web:${clientKey}`,
+      VDOC_SERVER_SIGNING_KEYS: 'test:runtime-only-signing-secret-at-least-32-characters',
+      BOSON_API_KEY: 'not-a-real-key', ANTHROPIC_API_KEY: 'not-a-real-key' },
+  }));
+  try {
+    const response = await workerRuntime.dispatchFetch('https://voice.test/v1/documents/pi-initialization/voice-sessions', { method: 'POST', headers });
+    expect(response.status).toBe(201);
+  } finally { await workerRuntime.dispose(); }
+});

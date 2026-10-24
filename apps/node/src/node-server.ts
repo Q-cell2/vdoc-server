@@ -4,11 +4,12 @@ import type { Server } from '@vdoc-server/composition';
 import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer } from 'ws';
+import { servePlayground } from './playground';
 
 const MAX_BODY = 64 * 1024;
 
 /** Adapts Node's http module to the Web-standard `HttpApi` and the realtime host. */
-export function startNodeServer(server: Server, options: { port: number; host?: string }): Promise<{ http: HttpServer; port: number; close(): Promise<void> }> {
+export function startNodeServer(server: Server, options: { port: number; host?: string; developmentPage?: boolean }): Promise<{ http: HttpServer; port: number; close(): Promise<void> }> {
   let maintenanceRun: Promise<void> | undefined;
   const maintenance = setInterval(() => {
     if (maintenanceRun) return;
@@ -19,7 +20,10 @@ export function startNodeServer(server: Server, options: { port: number; host?: 
   maintenance.unref();
   const sockets = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const http = createHttpServer((req, res) => {
-    void handleRequest(server, req, res);
+    void (async () => {
+      if (options.developmentPage && await servePlayground(req, res)) return;
+      await handleRequest(server, req, res);
+    })().catch(() => { if (!res.headersSent) res.writeHead(500); res.end('Local playground failed to start.'); });
   });
 
   http.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {

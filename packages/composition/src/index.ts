@@ -39,7 +39,7 @@ export async function createServer(parts: ServerParts): Promise<Server> {
   const logger = parts.logger ?? new JsonLogger(config.logLevel);
   if (!parts.models.has(config.model.provider)) throw new Error(`The configured model provider "${config.model.provider}" is not registered.`);
 
-  const profile = editingAssistantProfile(config.model, config.limits);
+  const profile = editingAssistantProfile(config.model, config.limits, config.environment === 'development' ? ['create_test_document', 'delete_test_blocks', 'insert_test_table'] : []);
   const profiles = new InMemoryAgentProfileRepository([profile], ProfileId.assume(profile.id));
   const [signer, applications] = await Promise.all([HmacGrantSigner.create(config.signingKeys), ApiKeyAuthenticator.create(config.clients)]);
 

@@ -13,7 +13,7 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DocumentVoiceRoom"] }, { "tag": "v2", "new_sqlite_classes": ["PrincipalQuotaRoom"] }, { "tag": "v3", "deleted_classes": ["PrincipalQuotaRoom"] }],
   "vars": {
     "VDOC_SERVER_ENV": "production",
-    "VDOC_SERVER_MODEL": "boson",
+    "VDOC_SERVER_MODEL": "boson-worker",
     "VDOC_SERVER_ALLOWED_ORIGINS": "https://vdoc.qyf070113.workers.dev,https://vdoc.ink"
   },
   // Previews do not inherit top-level vars or bindings. Cloudflare gives each
@@ -25,11 +25,11 @@
     "vars": {
       // Keep production validation/authentication enabled in public Previews.
       "VDOC_SERVER_ENV": "production",
-      "VDOC_SERVER_MODEL": "boson",
+      "VDOC_SERVER_MODEL": "boson-worker",
       "VDOC_SERVER_ALLOWED_ORIGINS": "https://vdoc.qyf070113.workers.dev,https://vdoc.ink"
     }
   }
-  // Secrets (wrangler secret put): VDOC_SERVER_SIGNING_KEYS, VDOC_SERVER_CLIENTS, BOSON_API_KEY
+  // Secrets (wrangler secret put): VDOC_SERVER_SIGNING_KEYS, VDOC_SERVER_CLIENTS, BOSON_API_KEY, ANTHROPIC_API_KEY
   // (or ANTHROPIC_API_KEY + OPENAI_API_KEY for VDOC_SERVER_MODEL=cascade-claude),
   // and optionally VDOC_SERVER_ALLOWED_ORIGINS. Local development reads them from .dev.vars.
 }

@@ -1,8 +1,8 @@
 # vdoc-server
 
-vdoc 的语音会话服务端：为文档签发语音会话、配置语音 Agent、审查 Agent 的每一次工具调用并留下审计记录。实时语音由 [vRealTime（vRT）](https://github.com/austinchennn/vRT) 承担，默认模型是 Boson Higgs Realtime。
+vdoc 的语音会话服务端：为文档签发语音会话、配置语音 Agent、审查 Agent 的每一次工具调用并留下审计记录。实时语音由 [vRealTime（vRT）](https://github.com/austinchennn/vRT) 承担，默认语音模型是 Boson Higgs Realtime；同时配置 Anthropic 密钥时默认由后台 Pi Agent 执行任务，Higgs 只负责委派与发声。
 
-文档内容不经过服务器保存，文档修改在浏览器中的 vdoc 里执行；服务端只决定"能不能做"。
+文档修改在浏览器中的 vdoc 里执行；读取结果进入后台模型的任务上下文，不写入普通日志或持久文档存储。服务端负责任务编排和权限审查。
 
 架构说明见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，关键决定见 [docs/adr](docs/adr)。
 
@@ -10,7 +10,7 @@ Cloudflare 的领域审计事件同时写入文档房间的 SQLite，可按会�
 
 ## 快速开始
 
-Node 22.13+。
+Node 22.19+。
 
 ```bash
 npm install
@@ -24,6 +24,22 @@ npm run dev
 ```bash
 BOSON_API_KEY=... VDOC_SERVER_MODEL=boson npm run dev
 ```
+
+使用后台 worker agent（需要两把密钥，不需要 OpenAI 密钥）：
+
+```bash
+BOSON_API_KEY=... ANTHROPIC_API_KEY=... VDOC_SERVER_MODEL=boson-worker npm run dev
+```
+
+本地 Node 开发模式可直接打开 `http://localhost:8787/` 测试麦克风、文字流与独立测试文档。
+根目录已忽略的 `.env` 会在 `npm run dev` 启动时读取；不要把模型密钥填进浏览器。
+页面仅接受本机请求，生产模式和 Cloudflare 不提供此调试入口。
+这不是完整 vdoc 编辑器：支持新建/切换测试文档、直接输入、文章插入与最近一次插入的撤销；刷新会清空测试文档。
+
+Higgs 只获得 `run_worker_agent` 一个工具；Pi 决定所有文档工具调用并接收实际结果。
+权限、确认、版本校验、客户端去重继续沿用现有通道。文字与工具参数增量沿用现有事件；
+vdoc 是否显示它们取决于已有 UI。详见 [Worker agent 架构](docs/WORKER_AGENT.md)。
+显式设置 `VDOC_SERVER_MODEL=boson` 可恢复旧模式。
 
 申请一个语音会话：
 
@@ -73,7 +89,10 @@ const session = await connect(`wss://voice.example.com${created.realtimePath}`, 
 | `VDOC_SERVER_CLIENTS` | `clientId:key,…`，key 至少 24 字符 |
 | `VDOC_SERVER_ALLOW_CLIENT_ONLY` | 是否接受不带 `X-Vdoc-User-Id` 的请求。生产默认 `false`，开发与测试默认 `true`；只在迁移窗口内临时设为 `true` |
 | `VDOC_SERVER_ALLOWED_ORIGINS` | 允许跨域访问的浏览器来源，逗号分隔 |
-| `VDOC_SERVER_MODEL` | `boson`、`openai`、`cascade-claude`、`fake`，可写成 `boson:<model>`。`cascade-claude` 是语音识别 + Claude + 语音合成，默认 `claude-opus-5-5`，可写成 `cascade-claude:<Claude 模型>` |
+| `VDOC_SERVER_MODEL` | `boson-worker`（Higgs 单工具 + Pi 后台 agent）、`boson`（旧版直接执行）、`openai`、`cascade-claude`、`fake`，可写成 `boson:<model>`。`cascade-claude` 是语音识别 + Claude + 语音合成，默认 `claude-opus-5-5`，可写成 `cascade-claude:<Claude 模型>` |
+| `VDOC_SERVER_WORKER_MODEL` | Pi 后台 Anthropic 模型，默认 `claude-sonnet-5-5`，须存在于固定版本的 Pi 模型目录 |
+| `VDOC_SERVER_WORKER_TIMEOUT_MS` | 后台任务总超时，默认 90000，最大 300000；含模型生成和工具等待 |
+| `VDOC_SERVER_WORKER_MAX_REQUESTS` | 后台每任务模型请求次数，默认/最大 12；实际工具仍受每轮 12 次调用的治理限制 |
 | `BOSON_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | 模型密钥。`cascade-claude` 需要 `ANTHROPIC_API_KEY`（Claude）和 `OPENAI_API_KEY`（语音识别与合成） |
 | `VDOC_SERVER_CONCURRENCY` | 同一文档已有会话时：`supersede`（默认，顶替）或 `reject` |
 | `VDOC_SERVER_GRANT_TTL_SECONDS` | 授权有效期，默认 60 |
@@ -108,6 +127,10 @@ npx wrangler secret put BOSON_API_KEY --cwd apps/worker
 ```
 
 ```bash
+npx wrangler secret put ANTHROPIC_API_KEY --cwd apps/worker
+```
+
+```bash
 npm run deploy -w @vdoc-server/app-worker
 ```
 
@@ -139,7 +162,7 @@ npm run deploy -w @vdoc-server/app-worker
 预览同样启用生产级配置校验，不会回退到开发凭据或假模型。
 
 生产 Secrets 不会自动成为预览 Secrets。需要实际测试语音接口时，在 **Previews Base**
-配置独立的 `VDOC_SERVER_SIGNING_KEYS`、`VDOC_SERVER_CLIENTS`、`BOSON_API_KEY`，
+配置独立的 `VDOC_SERVER_SIGNING_KEYS`、`VDOC_SERVER_CLIENTS`、`BOSON_API_KEY`、`ANTHROPIC_API_KEY`，
 不要将密钥写进仓库。Base 密钥变更只影响之后新建的 Preview；已有 Preview 需单独更新。
 `/healthz` 成功只表示 Worker 可访问，不能证明上述密钥和语音接口已验证。
 

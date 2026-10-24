@@ -1,7 +1,11 @@
+import { existsSync } from 'node:fs';
+import { loadEnvFile } from 'node:process';
 import { loadConfig } from '@vdoc-server/config';
 import { createNodeServer } from './create';
 import { startNodeServer } from './node-server';
 
+const localEnv = new URL('../../../.env', import.meta.url);
+if (existsSync(localEnv)) loadEnvFile(localEnv);
 const config = loadConfig(process.env);
 if (!config.ok) {
   console.error(`vdoc-server: invalid configuration\n  - ${config.errors.join('\n  - ')}`);
@@ -9,7 +13,7 @@ if (!config.ok) {
 }
 
 const server = await createNodeServer(config.value);
-const running = await startNodeServer(server, { port: Number(process.env.PORT ?? 8787), host: process.env.HOST ?? '127.0.0.1' });
+const running = await startNodeServer(server, { port: Number(process.env.PORT ?? 8787), host: process.env.HOST ?? '127.0.0.1', developmentPage: config.value.environment === 'development' });
 server.logger.log('info', 'vdoc-server listening', { port: running.port, environment: config.value.environment, model: config.value.model.provider });
 for (const generated of config.value.generated) server.logger.log('warn', `development default: ${generated}`);
 

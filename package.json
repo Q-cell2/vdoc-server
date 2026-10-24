@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Voice session server for vdoc: authenticates documents, configures the realtime agent and governs its tool calls. Built on vRealTime.",
   "engines": {
-    "node": ">=22.13"
+    "node": ">=22.19"
   },
   "workspaces": [
     "packages/*",

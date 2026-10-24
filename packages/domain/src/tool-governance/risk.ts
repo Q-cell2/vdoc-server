@@ -25,7 +25,7 @@ export interface OperationRiskTable {
 
 /** What counts as risky in vdoc's document operations (lib/domain/entities/operation.ts in vdoc). */
 export const VDOC_RISK_TABLE: OperationRiskTable = Object.freeze<OperationRiskTable>({
-  tools: { insert_structured_article: 'low', read_document: 'low', read_blocks: 'low', get_context: 'low', apply_document_operations: 'low', undo_turn: 'medium' },
+  tools: { insert_test_table: 'low', delete_test_blocks: 'medium', create_test_document: 'low', insert_structured_article: 'low', read_document: 'low', read_blocks: 'low', get_context: 'low', apply_document_operations: 'low', undo_turn: 'medium' },
   batchTools: ['apply_document_operations'],
   operations: {
     'text.findReplace': 'high', 'table.edit:deleteTable': 'high', 'block.delete': 'high',

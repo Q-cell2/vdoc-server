@@ -209,7 +209,18 @@ export class RealtimeHost implements RealtimeConnections {
         if (!settings.ok) throw new Error(settings.error.message);
         return toSessionConfig(settings.value);
       },
-      onContext: (value, session) => { if (!session.closed) context.schedule(value); },
+      onContext: (value, session) => {
+        if (session.closed) return;
+        const control = value as { documentId?: unknown; voiceControl?: { type?: unknown; id?: unknown } } | null;
+        if (control?.voiceControl !== undefined) {
+          if (control.documentId !== documentId || control.voiceControl?.type !== 'finish-speech' || typeof control.voiceControl.id !== 'string' || !/^[A-Za-z0-9-]{1,96}$/.test(control.voiceControl.id)) {
+            this.#log('warn', 'voice control refused', { sessionId, code: 'INVALID' }); return;
+          }
+          if (!context.finishSpeech(control.voiceControl.id)) this.#log('warn', 'voice control refused', { sessionId, code: 'UNSUPPORTED' });
+          return;
+        }
+        context.schedule(value);
+      },
       ...(this.options.resumeWindowMs !== undefined ? { resumeWindowMs: this.options.resumeWindowMs } : {}),
       ...(this.options.heartbeatTimeoutMs !== undefined ? { heartbeatTimeoutMs: this.options.heartbeatTimeoutMs } : {}),
     });

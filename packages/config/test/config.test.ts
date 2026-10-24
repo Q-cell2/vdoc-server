@@ -80,6 +80,30 @@ describe('editing assistant profile', () => {
   it('lists exactly the tools vdoc declares, each with a risk level', () => {
     // vdoc's catalog: lib/usecases/document-tools.ts in Q-cell2/vdoc.
     expect([...VDOC_TOOLS].sort()).toEqual(['apply_document_operations', 'get_context', 'insert_structured_article', 'read_blocks', 'read_document', 'undo_turn']);
-    expect(Object.keys(VDOC_RISK_TABLE.tools).sort()).toEqual([...VDOC_TOOLS].sort());
+    expect(Object.keys(VDOC_RISK_TABLE.tools).sort()).toEqual([...VDOC_TOOLS, 'create_test_document', 'delete_test_blocks', 'insert_test_table'].sort());
+
   });
+});
+
+
+it('selects the worker architecture with both keys, validates explicit mode and budgets', () => {
+  expect(loadConfig({ BOSON_API_KEY: 'b', ANTHROPIC_API_KEY: 'a' })).toMatchObject({ ok: true, value: { model: { provider: 'boson-worker' }, workerAgent: { model: 'claude-sonnet-5-5', maxRequests: 12, timeoutMs: 90000 } } });
+  expect(loadConfig({ VDOC_SERVER_MODEL: 'boson-worker', BOSON_API_KEY: 'b' }).ok).toBe(false);
+  expect(loadConfig({ VDOC_SERVER_MODEL: 'boson-worker', ANTHROPIC_API_KEY: 'a' }).ok).toBe(false);
+  expect(loadConfig({ VDOC_SERVER_WORKER_MAX_REQUESTS: '13' }).ok).toBe(false);
+  expect(loadConfig({ VDOC_SERVER_WORKER_TIMEOUT_MS: '300001' }).ok).toBe(false);
+  expect(loadConfig({ VDOC_SERVER_WORKER_MODEL: ' ' }).ok).toBe(false);
+  expect(loadConfig({ VDOC_SERVER_MODEL: 'boson', BOSON_API_KEY: 'b', ANTHROPIC_API_KEY: 'a' })).toMatchObject({ ok: true, value: { model: { provider: 'boson' } } });
+});
+
+
+it('keeps local creation and deletion tools opt-in for the development profile', () => {
+  const loaded = loadConfig({}); if (!loaded.ok) throw new Error();
+  expect(editingAssistantProfile({ provider: 'boson-worker' }, loaded.value.limits).allowedTools.has('create_test_document')).toBe(false);
+  expect(editingAssistantProfile({ provider: 'boson-worker' }, loaded.value.limits).allowedTools.has('delete_test_blocks')).toBe(false);
+  const development = editingAssistantProfile({ provider: 'boson-worker' }, loaded.value.limits, ['create_test_document', 'delete_test_blocks', 'insert_test_table']);
+  expect(development.allowedTools.has('create_test_document')).toBe(true);
+  expect(development.allowedTools.has('delete_test_blocks')).toBe(true);
+  expect(editingAssistantProfile({ provider: 'boson-worker' }, loaded.value.limits).allowedTools.has('insert_test_table')).toBe(false);
+  expect(development.allowedTools.has('insert_test_table')).toBe(true);
 });

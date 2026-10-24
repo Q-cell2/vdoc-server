@@ -1,3 +1,5 @@
+export { delegatedModel, DELEGATE_TOOL } from './worker/delegated-model';
+export { createPiWorker, type WorkerRunner, type WorkerEvent, type WorkerContext, type WorkerRequest } from './worker/pi-worker';
 export { withLifecycle, type ModelLifecycle } from './lifecycle-model';
 export { ModelRegistry, type ModelProvider } from './model-registry';
 export { createModelRegistry, type ModelRegistryOptions } from './models';

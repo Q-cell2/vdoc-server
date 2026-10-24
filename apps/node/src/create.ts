@@ -13,6 +13,7 @@ export function createNodeServer(config: ServerConfig, overrides: Partial<Omit<S
       bosonApiKey: config.providerKeys.boson,
       openaiApiKey: config.providerKeys.openai,
       anthropicApiKey: config.providerKeys.anthropic,
+      workerAgent: config.workerAgent,
       fake: config.environment === 'production' ? false : fakeResponder ? { respond: fakeResponder } : {},
     }),
     ...parts,
