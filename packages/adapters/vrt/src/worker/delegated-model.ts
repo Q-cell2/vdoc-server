@@ -59,6 +59,8 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
       let actorResponse: string | undefined;
       let actorDelegated = false;
       let actorInvalid = false;
+      // What went wrong in the performer's reply, for the VOICE_REPLY_FAILED log line only.
+      let actorInvalidReason = '';
       let delegationRetries = 0;
       let repairDelegation = false;
       let lastCompletedWrites = 0;
@@ -264,12 +266,14 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
         clearTimeout(fallbackTimer); stopEndingAudio();
         actorResponse = event.responseId;
         actorDelegated = false;
-        actorInvalid = false;
+        actorInvalid = false; actorInvalidReason = '';
         emit(event);
       });
       listen('tool.call', event => {
         if (blocked || retiredResponses.has(event.responseId)) return;
-        if (event.responseId !== actorResponse || actorDelegated || actorReply || active) { actorInvalid = true; return; }
+        if (event.responseId !== actorResponse || actorDelegated || actorReply || active) {
+          actorInvalid = true; actorInvalidReason = actorReply ? `tool call ${event.name} during reply` : 'unexpected tool call'; return;
+        }
         const args = event.arguments as { request?: unknown } | null;
         if (event.name !== DELEGATE_TOOL || typeof args?.request !== 'string' || !args.request.trim() || args.request.length > 16000) { actorInvalid = true; return; }
         actorDelegated = true;
@@ -290,7 +294,7 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
             return;
           }
           const message = actorReply
-            ? `VOICE_REPLY_FAILED: Pi 已完成本轮处理${lastCompletedWrites ? '，文档已有成功修改' : ''}，但 Higgs 播报失败。请查看文字和文档；不会重新执行工具。`
+            ? `VOICE_REPLY_FAILED: Pi 已完成本轮处理${lastCompletedWrites ? '，文档已有成功修改' : ''}，但 Higgs 播报失败。请查看文字和文档；不会重新执行工具。${replyFailure(event.status, event.stopReason, actorInvalidReason)}`
             : 'ACTOR_DELEGATION_FAILED: Higgs 未能按要求委派任务，Pi 尚未执行本轮操作；请重新发送请求。';
           stop(); blocked = true;
           emit({ type: 'error', error: new Error(message), recoverable: true });
@@ -300,7 +304,7 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
         } else {
           actorReply = false;
           if (event.stopReason !== undefined && event.stopReason !== 'completed') {
-            emit({ type: 'error', error: new Error('VOICE_REPLY_FAILED: Pi 已完成本轮处理，但 Higgs 播报未正常结束。请查看文字和文档，不会重新执行工具。'), recoverable: true });
+            emit({ type: 'error', error: new Error(`VOICE_REPLY_FAILED: Pi 已完成本轮处理，但 Higgs 播报未正常结束。请查看文字和文档，不会重新执行工具。${replyFailure(event.status, event.stopReason, '')}`), recoverable: true });
             emit({ ...event, status: 'failed', stopReason: 'failed' });
           } else emit({ ...event, stopReason: 'completed' });
         }
@@ -314,7 +318,7 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
         const responseId = active?.responseId ?? actorResponse;
         const wasVoiceReply = actorReply;
         stop(); blocked = true;
-        if (wasVoiceReply) emit({ type: 'error', error: new Error('VOICE_REPLY_FAILED: Pi 已完成本轮处理，但语音服务出错。已成功修改的文档保留，不会重放工具。'), recoverable: event.recoverable });
+        if (wasVoiceReply) emit({ type: 'error', error: new Error(`VOICE_REPLY_FAILED: Pi 已完成本轮处理，但语音服务出错。已成功修改的文档保留，不会重放工具。${replyFailure(undefined, undefined, `provider error${code ? ` ${code}` : ''}`)}`), recoverable: event.recoverable });
         else emit(event);
         if (responseId) emit({ type: 'response.end', responseId, status: 'failed', stopReason: 'failed' });
       });
@@ -376,6 +380,10 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
       return session;
     },
   };
+}
+/** Fixed reason codes only: provider error text may quote document content. */
+function replyFailure(status: string | undefined, stopReason: string | undefined, detail: string): string {
+  return ` [${[status && `status=${status}`, stopReason && `stopReason=${stopReason}`, detail].filter(Boolean).join(', ')}]`;
 }
 function actorConfig(config: SessionConfig): SessionConfig {
   return { ...config, turnDetection: config.turnDetection === null ? null : 'server', instructions: ACTOR_INSTRUCTIONS, tools: [DELEGATE_SPEC] };
