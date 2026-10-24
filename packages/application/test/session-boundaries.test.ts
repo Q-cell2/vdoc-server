@@ -70,7 +70,7 @@ describe('aggregate and persistence boundaries', () => {
   it('retains confirmation and input sequence across repeated aggregate reconstruction', async () => {
     const h = harness();
     const { sessionId } = await connected(h);
-    const request = (turnId: string) => ({ sessionId, callId: `call-${turnId}`, turnId, name: 'apply_document_operations', arguments: { operations: [{ type: 'block.delete', id: 'b1' }] } });
+    const request = (turnId: string) => ({ sessionId, callId: `call-${turnId}`, turnId, name: 'apply_document_operations', arguments: { operations: [{ type: 'block.delete', id: 'b1' }, { type: 'block.delete', id: 'b2' }] } });
     await h.app.recordUserInput.execute({ sessionId });
     expect(await h.app.reviewToolCall.execute(request('t1'))).toMatchObject({ kind: 'confirm' });
     const first = VoiceSession.restore(structuredClone(h.repository.rows.get(sessionId)!));

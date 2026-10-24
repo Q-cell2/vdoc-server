@@ -14,6 +14,11 @@ describe('RiskAssessor', () => {
     expect(assessor.assess(call('apply_document_operations', ops('text.findReplace'))).risk).toBe('high');
   });
 
+  it('rates deleting one block like deleting its text, and deleting several as high', () => {
+    expect(assessor.assess(call('apply_document_operations', ops('block.delete'))).risk).toBe('medium');
+    expect(assessor.assess(call('apply_document_operations', ops('block.delete', 'block.delete'))).risk).toBe('high');
+  });
+
   it('treats unrated operations as high, unknown tools as medium, and very large batches as high', () => {
     expect(assessor.assess(call('apply_document_operations', ops('something.new'))).risk).toBe('high');
     expect(assessor.assess(call('apply_document_operations', { operations: [{ action: 'deleteTable' }] })).risk).toBe('high');
@@ -72,9 +77,9 @@ describe('VoiceSession.reviewToolCall', () => {
     expect(review(session, destructive('t3', 6), governance(), 4, 3).kind).toBe('confirm');
   });
 
-  it('does not let a confirmation for one block authorize deleting another', () => {
+  it('does not let a confirmation for one table authorize deleting another', () => {
     const session = activeSession();
-    const remove = (id: string, turn: string) => call('apply_document_operations', { expectedSessionId: 'ed1', expectedBlocks: [{ id, version: 1 }], target: { kind: 'block', id }, operations: [{ type: 'block.delete', id }] }, turn);
+    const remove = (id: string, turn: string) => call('apply_document_operations', { expectedSessionId: 'ed1', expectedBlocks: [{ id, version: 1 }], target: { kind: 'block', id }, operations: [{ type: 'table.edit', action: 'deleteTable' }] }, turn);
     expect(review(session, remove('b1', 't1'), governance(), 1, 1).kind).toBe('confirm');
     expect(review(session, remove('b2', 't2'), governance(), 2, 2).kind).toBe('confirm');
     expect(review(session, remove('b1', 't3'), governance(), 3, 3)).toEqual({ kind: 'allow', risk: 'high' });
@@ -82,7 +87,7 @@ describe('VoiceSession.reviewToolCall', () => {
 
   it('consumes a confirmation only after the user has given input since it was asked', () => {
     const session = activeSession();
-    const destructive = (turn: string) => call('apply_document_operations', ops('block.delete'), turn);
+    const destructive = (turn: string) => call('apply_document_operations', ops('block.delete', 'block.delete'), turn);
     expect(review(session, destructive('t1'), governance(), 1, 1).kind).toBe('confirm');
     // A turn the model opened by itself (late tool result, unprompted response): no new input.
     expect(review(session, destructive('t2'), governance(), 2, 1).kind).toBe('confirm');
@@ -91,7 +96,7 @@ describe('VoiceSession.reviewToolCall', () => {
 
   it('asks again for confirmations stored before user input was tracked', () => {
     const asked = activeSession();
-    const destructive = (turn: string) => call('apply_document_operations', ops('block.delete'), turn);
+    const destructive = (turn: string) => call('apply_document_operations', ops('block.delete', 'block.delete'), turn);
     expect(review(asked, destructive('t1'), governance(), 1, 1).kind).toBe('confirm');
     const snapshot = structuredClone(asked.toSnapshot());
     const legacy = VoiceSession.restore({ ...snapshot, pendingConfirmations: snapshot.pendingConfirmations.map(({ fingerprint, turnId }) => ({ fingerprint, turnId })) });

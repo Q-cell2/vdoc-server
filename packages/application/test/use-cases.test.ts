@@ -141,7 +141,7 @@ describe('ReviewToolCall, RecordToolResult and CompleteTurn', () => {
   it('consumes a destructive-edit confirmation only after new user input, treating bad counts as none', async () => {
     const h = harness();
     const { sessionId } = await connected(h);
-    const destructive = (turnId: string, userInputs: number) => ({ ...call(sessionId, 'apply_document_operations', { operations: [{ type: 'block.delete', id: 'b1' }] }, turnId), userInputs });
+    const destructive = (turnId: string, userInputs: number) => ({ ...call(sessionId, 'apply_document_operations', { operations: [{ type: 'block.delete', id: 'b1' }, { type: 'block.delete', id: 'b2' }] }, turnId), userInputs });
     expect(await h.app.reviewToolCall.execute(destructive('t1', 1))).toMatchObject({ kind: 'confirm' });
     expect(await h.app.reviewToolCall.execute(destructive('t2', 1))).toMatchObject({ kind: 'confirm' });
     expect(await h.app.reviewToolCall.execute(destructive('t3', Number.NaN))).toMatchObject({ kind: 'confirm' });
@@ -171,7 +171,7 @@ describe('ReviewToolCall, RecordToolResult and CompleteTurn', () => {
   it('asks again when the user has spoken since a confirmed edit failed', async () => {
     const h = harness();
     const { sessionId } = await connected(h);
-    const args = { operations: [{ type: 'block.delete', id: 'b1' }] };
+    const args = { operations: [{ type: 'block.delete', id: 'b1' }, { type: 'block.delete', id: 'b2' }] };
     expect(await h.app.reviewToolCall.execute(call(sessionId, 'apply_document_operations', args, 't1'))).toMatchObject({ kind: 'confirm' });
     await h.app.recordUserInput.execute({ sessionId });
     const first = call(sessionId, 'apply_document_operations', args, 't2');

@@ -21,6 +21,8 @@ export interface OperationRiskTable {
   readonly operations: Readonly<Record<string, RiskLevel>>;
   /** A batch this large is `high` whatever it contains. */
   readonly highRiskBatchSize: number;
+  /** Operations that are `high` when one call holds more than one of them, whatever their own rating. */
+  readonly highRiskWhenRepeated: readonly string[];
 }
 
 /** What counts as risky in vdoc's document operations (lib/domain/entities/operation.ts in vdoc). */
@@ -28,7 +30,9 @@ export const VDOC_RISK_TABLE: OperationRiskTable = Object.freeze<OperationRiskTa
   tools: { insert_test_table: 'low', delete_test_blocks: 'medium', create_test_document: 'low', insert_structured_article: 'low', read_document: 'low', read_blocks: 'low', get_context: 'low', apply_document_operations: 'low', undo_turn: 'medium' },
   batchTools: ['apply_document_operations'],
   operations: {
-    'text.findReplace': 'high', 'table.edit:deleteTable': 'high', 'block.delete': 'high',
+    'text.findReplace': 'high', 'table.edit:deleteTable': 'high',
+    // One paragraph or list item, like text.delete; deleting several blocks at once is high (highRiskWhenRepeated).
+    'block.delete': 'medium',
     'text.delete': 'medium', 'text.replace': 'medium', 'text.clear': 'medium', 'block.move': 'medium',
     'table.edit:deleteRow': 'medium', 'table.edit:deleteColumn': 'medium', 'table.sort': 'medium', 'table.move': 'medium',
     'document.layout': 'medium', 'document.language': 'medium',
@@ -42,6 +46,7 @@ export const VDOC_RISK_TABLE: OperationRiskTable = Object.freeze<OperationRiskTa
     'block.code': 'low', 'block.quote': 'low', 'block.rule': 'low', 'block.toc': 'low', 'block.pageBreak': 'low', 'block.insert': 'low',
   },
   highRiskBatchSize: 25,
+  highRiskWhenRepeated: ['block.delete'],
 });
 
 /** Domain service: classifies a call using an `OperationRiskTable`. */
@@ -55,6 +60,7 @@ export class RiskAssessor {
     const operations = Array.isArray(list) ? list.map(describe) : [];
     for (const operation of operations) risk = maxRisk(risk, this.table.operations[operation] ?? this.table.operations[operation.split(':')[0]!] ?? 'high');
     if (operations.length >= this.table.highRiskBatchSize) risk = 'high';
+    if (this.table.highRiskWhenRepeated.some(type => operations.filter(operation => operation === type).length > 1)) risk = 'high';
     return { risk, operations };
   }
 }
