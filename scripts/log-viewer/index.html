@@ -38,7 +38,7 @@ li.item.selected { background:color-mix(in srgb, var(--accent) 12%, transparent)
 .row.bad { background:var(--bad-bg); } .row.warn { background:var(--warn-bg); }
 .row time { color:var(--muted); font-variant-numeric:tabular-nums; }
 .row .what b { font-weight:600; }
-.row .ok { color:var(--ok); } .row .fail { color:var(--bad); font-weight:600; }
+.row .ok { color:var(--ok); } .row .hold { color:var(--warn); font-weight:600; } .row .fail { color:var(--bad); font-weight:600; }
 details.raw summary { cursor:pointer; color:var(--muted); font-size:12px; }
 details.raw pre { margin:4px 0 0; padding:8px; background:var(--bg); border-radius:8px; overflow:auto; font-size:11px; white-space:pre-wrap; word-break:break-all; }
 .empty { padding:24px 14px; color:var(--muted); }
@@ -81,9 +81,11 @@ const explain = text => (EXPLAIN.find(([re]) => re.test(text)) ?? [, ''])[1];
 const time = iso => iso ? new Date(iso).toLocaleTimeString('zh-CN', { hour12:false }) + '.' + String(new Date(iso).getMilliseconds()).padStart(3, '0') : '';
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
 
+// A high-risk edit is held until the user says yes; its REJECTED result is that question, not a failure.
+const awaitingConfirmation = new Set();
 function isProblem(e) {
   if (e.level === 'error' || e.level === 'warn') return !/^development default/.test(e.message);
-  if (e.message === 'ToolCallCompleted' && e.ok === false) return true;
+  if (e.message === 'ToolCallCompleted' && e.ok === false) return !awaitingConfirmation.has(e.callId);
   if (e.message === 'ToolCallReviewed' && e.decision === 'deny') return true;
   return false;
 }
@@ -98,8 +100,10 @@ function describe(e) {
     case 'VoiceSessionGranted': return '<b>会话开始</b>（已授权）';
     case 'VoiceSessionConnected': return e.reconnect ? '<b>重新连接</b>' : '<b>语音已连接</b>';
     case 'UserInputRecorded': return `🗣️ <b>用户说话</b> #${e.sequence}`;
-    case 'ToolCallReviewed': return e.decision === 'deny' ? `<span class="fail">⛔ 工具 ${esc(e.tool)} 被拒绝</span>（${esc(e.code)}）` : null;
-    case 'ToolCallCompleted': return e.ok ? `<span class="ok">✓</span> 工具 <b>${esc(e.tool)}</b> 成功` : `<span class="fail">✗ 工具 ${esc(e.tool)} 失败</span>（${esc(e.code)}）`;
+    case 'ToolCallReviewed': return e.decision === 'deny' ? `<span class="fail">⛔ 工具 ${esc(e.tool)} 被拒绝</span>（${esc(e.code)}）`
+      : e.decision === 'confirm' ? `<span class="hold">⚠ 工具 ${esc(e.tool)} 需要用户确认</span>（${esc((e.operations ?? []).join(', '))}，高风险，先问用户，确认后原样再执行）` : null;
+    case 'ToolCallCompleted': if (!e.ok && awaitingConfirmation.has(e.callId)) return `<span class="meta">等待用户确认，这次没有执行</span>`;
+      return e.ok ? `<span class="ok">✓</span> 工具 <b>${esc(e.tool)}</b> 成功` : `<span class="fail">✗ 工具 ${esc(e.tool)} 失败</span>（${esc(e.code)}）`;
     case 'TurnCompleted': return `一轮结束 · 工具 ${e.toolCalls} 次`;
     case 'VoiceSessionEnded': return `<b>会话结束</b>（${esc(e.reason)}，${Math.round((e.durationMs ?? 0) / 1000)} 秒）`;
     case 'voice metrics':
@@ -120,6 +124,7 @@ function visible() {
 
 function render() {
   // Production events can arrive out of order; show everything by its own timestamp.
+  for (const e of all) if (e.message === 'ToolCallReviewed' && e.decision === 'confirm') awaitingConfirmation.add(e.callId);
   const list = visible().sort((x, y) => String(x.time).localeCompare(String(y.time)) || x.id - y.id);
   // problems (skip the runtime's duplicate "Generation stopped" line)
   const problems = list.filter(e => isProblem(e) && !/^Generation stopped/.test(e.error ?? '')).slice(-200).reverse();
