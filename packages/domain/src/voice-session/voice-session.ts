@@ -22,6 +22,11 @@ export interface PendingConfirmation {
   readonly turnId: string;
   /** Absent in snapshots written before this field existed; such confirmations are asked again. */
   readonly userInputs?: number;
+  /**
+   * Set once the user's yes let the call through: the user input count at that moment. A call that
+   * failed (a stale target, say) may be retried until the user speaks again, without asking twice.
+   */
+  readonly confirmedAtUserInputs?: number;
 }
 
 /** Plain, serialisable state (Memento). Repositories store this, never the object. */
@@ -172,15 +177,19 @@ export class VoiceSession extends AggregateRoot<VoiceSessionEvent> {
     } else {
       const print = fingerprint(call);
       const confirmedInEarlierTurn = this.state.pendingConfirmations.some((p) =>
-        p.fingerprint === print && p.turnId !== call.turnId && userInputs > (p.userInputs ?? Infinity));
+        p.fingerprint === print && p.turnId !== call.turnId && userInputs > (p.userInputs ?? Infinity)
+        && (p.confirmedAtUserInputs === undefined || p.confirmedAtUserInputs === userInputs));
       decision = governance.policy.review({
         call, assessment, allowedTools: governance.allowedTools, limits: this.state.limits,
         callsSoFarInTurn: Usage.callsSoFar(this.state.usage, call.turnId), confirmedInEarlierTurn,
       });
       const others = this.state.pendingConfirmations.filter((p) => p.fingerprint !== print);
+      // A confirmation is used up by the edit succeeding (recordToolResult), not by being let through.
       const pendingConfirmations = decision.kind === 'confirm'
         ? [...others, { fingerprint: print, turnId: call.turnId, userInputs }].slice(-MAX_PENDING_CONFIRMATIONS)
-        : decision.kind === 'allow' && confirmedInEarlierTurn ? others : this.state.pendingConfirmations;
+        : decision.kind === 'allow' && confirmedInEarlierTurn
+          ? this.state.pendingConfirmations.map((p) => p.fingerprint === print ? { ...p, confirmedAtUserInputs: p.confirmedAtUserInputs ?? userInputs } : p)
+          : this.state.pendingConfirmations;
       this.state = { ...this.state, usage: Usage.withToolCall(this.state.usage, call.turnId), pendingConfirmations };
     }
     // A session is bounded by turns/calls; persist only decisions that consumed its call budget.
@@ -194,7 +203,9 @@ export class VoiceSession extends AggregateRoot<VoiceSessionEvent> {
 
   recordToolResult(call: Pick<ToolCall, 'id' | 'name' | 'turnId'>, outcome: { ok: boolean; code?: string }, now: number): void {
     if ((this.state.completedToolCallIds ?? []).includes(call.id)) return;
-    this.state = { ...this.state, completedToolCallIds: [...(this.state.completedToolCallIds ?? []), call.id].slice(-REMEMBERED_TOOL_RESULTS) };
+    const print = this.state.toolDecisions?.[call.id]?.fingerprint;
+    const pendingConfirmations = outcome.ok && print !== undefined ? this.state.pendingConfirmations.filter((p) => p.fingerprint !== print) : this.state.pendingConfirmations;
+    this.state = { ...this.state, pendingConfirmations, completedToolCallIds: [...(this.state.completedToolCallIds ?? []), call.id].slice(-REMEMBERED_TOOL_RESULTS) };
     this.record({
       type: 'ToolCallCompleted', aggregateId: this.state.id, occurredAt: now, callId: call.id, tool: call.name, turnId: call.turnId,
       ok: outcome.ok, ...(outcome.code !== undefined ? { code: outcome.code } : {}),
