@@ -1,0 +1,24 @@
+{
+  "name": "@vdoc-server/app-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "vdoc-server on Cloudflare Workers: one Durable Object per document hosts its voice sessions.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "vitest run --config vitest.config.ts",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@vdoc-server/adapter-cloudflare": "0.1.0",
+    "@vdoc-server/adapter-http": "0.1.0",
+    "@vdoc-server/adapter-vrt": "0.1.0",
+    "@vdoc-server/composition": "0.1.0",
+    "@vdoc-server/config": "0.1.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20260515.1",
+    "@vrealtime/client": "0.2.1",
+    "wrangler": "4.151.0"
+  }
+}

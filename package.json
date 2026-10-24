@@ -1,0 +1,28 @@
+{
+  "name": "vdoc-server",
+  "private": true,
+  "type": "module",
+  "description": "Voice session server for vdoc: authenticates documents, configures the realtime agent and governs its tool calls. Built on vRealTime.",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "workspaces": [
+    "packages/*",
+    "packages/adapters/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p apps/worker/tsconfig.json",
+    "test": "vitest run",
+    "check:architecture": "node scripts/check-architecture.mjs",
+    "check": "npm run typecheck && npm run check:architecture && npm test",
+    "dev": "npm run dev -w @vdoc-server/app-node"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "esbuild": "0.28.2",
+    "miniflare": "5.20261012.0-beta",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}

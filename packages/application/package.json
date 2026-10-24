@@ -1,0 +1,10 @@
+{
+  "name": "@vdoc-server/application",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "description": "vdoc-server use cases and the ports they need. Depends only on the domain.",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@vdoc-server/domain": "0.1.0" }
+}

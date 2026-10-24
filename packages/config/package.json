@@ -1,0 +1,10 @@
+{
+  "name": "@vdoc-server/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "description": "Typed, validated vdoc-server configuration from environment variables, and the built-in agent profiles.",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@vdoc-server/domain": "0.1.0" }
+}

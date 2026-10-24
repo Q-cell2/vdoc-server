@@ -1,0 +1,10 @@
+{
+  "name": "@vdoc-server/adapter-memory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "description": "In-memory repositories and recording test doubles for vdoc-server ports.",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@vdoc-server/application": "0.1.0", "@vdoc-server/domain": "0.1.0" }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "@vdoc-server/domain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "description": "vdoc-server domain model: voice sessions, grants, agent profiles and tool governance. No dependencies.",
+  "exports": { ".": "./src/index.ts" }
+}

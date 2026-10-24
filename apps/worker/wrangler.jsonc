@@ -1,0 +1,35 @@
+{
+  // One Durable Object per document hosts that document's voice sessions and their realtime connections.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "vdoc-server",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  // Workers Logs: the JSON log lines and each request's invocation log. A deploy applies this, so a
+  // dashboard toggle alone is switched off again by the next Workers Builds deploy.
+  "observability": { "logs": { "enabled": true, "invocation_logs": true } },
+  "durable_objects": {
+    "bindings": [{ "name": "VOICE_ROOMS", "class_name": "DocumentVoiceRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DocumentVoiceRoom"] }, { "tag": "v2", "new_sqlite_classes": ["PrincipalQuotaRoom"] }, { "tag": "v3", "deleted_classes": ["PrincipalQuotaRoom"] }],
+  "vars": {
+    "VDOC_SERVER_ENV": "production",
+    "VDOC_SERVER_MODEL": "boson-worker",
+    "VDOC_SERVER_ALLOWED_ORIGINS": "https://vdoc.qyf070113.workers.dev,https://vdoc.ink"
+  },
+  // Previews do not inherit top-level vars or bindings. Cloudflare gives each
+  // Preview its own namespace for this locally defined Durable Object class.
+  "previews": {
+    "durable_objects": {
+      "bindings": [{ "name": "VOICE_ROOMS", "class_name": "DocumentVoiceRoom" }]
+    },
+    "vars": {
+      // Keep production validation/authentication enabled in public Previews.
+      "VDOC_SERVER_ENV": "production",
+      "VDOC_SERVER_MODEL": "boson-worker",
+      "VDOC_SERVER_ALLOWED_ORIGINS": "https://vdoc.qyf070113.workers.dev,https://vdoc.ink"
+    }
+  }
+  // Secrets (wrangler secret put): VDOC_SERVER_SIGNING_KEYS, VDOC_SERVER_CLIENTS, BOSON_API_KEY, ANTHROPIC_API_KEY
+  // (or ANTHROPIC_API_KEY + OPENAI_API_KEY for VDOC_SERVER_MODEL=cascade-claude),
+  // and optionally VDOC_SERVER_ALLOWED_ORIGINS. Local development reads them from .dev.vars.
+}

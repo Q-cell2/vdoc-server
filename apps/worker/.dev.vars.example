@@ -1,0 +1,10 @@
+# Example only. Copy to apps/worker/.dev.vars for local testing, never commit real values.
+VDOC_SERVER_ENV=test
+VDOC_SERVER_MODEL=fake
+VDOC_SERVER_ALLOW_CLIENT_ONLY=false
+VDOC_SERVER_CLIENTS=web:replace-with-at-least-24-random-characters
+VDOC_SERVER_SIGNING_KEYS=k1:replace-with-at-least-32-random-characters
+# Production: set VDOC_SERVER_ENV=production and VDOC_SERVER_MODEL=boson.
+# Store VDOC_SERVER_CLIENTS, VDOC_SERVER_SIGNING_KEYS and BOSON_API_KEY as Cloudflare secrets.
+# In vdoc set VDOC_SERVER_URL to this Worker's HTTPS origin and
+# VDOC_SERVER_CLIENT_KEY to the key component of the registered web application.
