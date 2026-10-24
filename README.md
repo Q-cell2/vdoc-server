@@ -188,6 +188,19 @@ npm test -w @vdoc-server/app-worker
 
 轮次延迟、工具审查与执行结果会输出为带 `metrics: true` 的 JSON 指标日志，字段与采集边界见 [语音指标](docs/METRICS.md)。
 
+### 日志查看器
+
+```bash
+npm run dev:logs   # 照常启动本地服务，同时把输出追加到 scripts/log-viewer/logs/local.jsonl
+npm run logs       # 打开 http://localhost:8790
+```
+
+页面按语音会话整理本地与线上日志：顶部列出警告、错误、失败或被拒绝的工具调用，并对常见错误码给出中文解释；
+点左侧会话可查看完整时间线和原始 JSON。点「连接线上实时日志」会在仓库根目录运行
+`npx wrangler tail vdoc-server --format json`，需先 `npx wrangler login` 且有该 Cloudflare 账号权限；
+只接收连接之后的日志，抓到的线上日志会存到 `scripts/log-viewer/logs/production.jsonl`，查看器重启后仍在。
+`logs/` 已被 git 忽略。端口用 `VDOC_LOG_VIEWER_PORT` 覆盖，只监听 `127.0.0.1`。
+
 ## 包结构
 
 ```

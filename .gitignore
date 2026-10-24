@@ -6,3 +6,4 @@ dist/
 *.tsbuildinfo
 .DS_Store
 coverage/
+scripts/log-viewer/logs/

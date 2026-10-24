@@ -16,7 +16,9 @@
     "test": "vitest run",
     "check:architecture": "node scripts/check-architecture.mjs",
     "check": "npm run typecheck && npm run check:architecture && npm test",
-    "dev": "npm run dev -w @vdoc-server/app-node"
+    "dev": "npm run dev -w @vdoc-server/app-node",
+    "dev:logs": "mkdir -p scripts/log-viewer/logs && npm run dev 2>&1 | tee -a scripts/log-viewer/logs/local.jsonl",
+    "logs": "node scripts/log-viewer/server.mjs"
   },
   "devDependencies": {
     "@types/node": "22.19.19",

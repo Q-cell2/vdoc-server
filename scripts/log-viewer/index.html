@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vdoc 日志</title>
+<style>
+:root { --bg:#f5f5f7; --panel:#fff; --text:#1d1d1f; --muted:#6e6e73; --line:#e5e5ea; --accent:#0a84ff; --bad:#d70015; --bad-bg:#fff1f0; --warn:#b25000; --warn-bg:#fff7eb; --ok:#248a3d; --chip:#f0f0f3; }
+@media (prefers-color-scheme: dark) { :root { --bg:#111113; --panel:#1c1c1e; --text:#f5f5f7; --muted:#98989d; --line:#2c2c2e; --accent:#409cff; --bad:#ff6961; --bad-bg:#3a1a1a; --warn:#ffb340; --warn-bg:#3a2a12; --ok:#30d158; --chip:#2c2c2e; } }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font:13px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+header { position:sticky; top:0; z-index:2; display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:12px 16px; background:var(--panel); border-bottom:1px solid var(--line); }
+h1 { margin:0 8px 0 0; font-size:16px; }
+label { display:flex; align-items:center; gap:4px; color:var(--muted); }
+input[type=search] { min-width:200px; flex:1; max-width:360px; padding:6px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--text); }
+button { padding:6px 12px; border:1px solid var(--line); border-radius:8px; background:var(--chip); color:var(--text); cursor:pointer; }
+button:hover { border-color:var(--accent); }
+.dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--muted); }
+.dot.running { background:var(--ok); } .dot.failed { background:var(--bad); } .dot.starting { background:var(--warn); }
+main { display:grid; grid-template-columns:minmax(260px, 340px) 1fr; gap:12px; padding:12px 16px; }
+@media (max-width:800px) { main { grid-template-columns:1fr; } }
+section { background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+section > h2 { margin:0; padding:10px 14px; font-size:13px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; }
+#problems { grid-column:1 / -1; }
+#problems ul, #sessions ul { list-style:none; margin:0; padding:0; max-height:260px; overflow:auto; }
+#sessions ul { max-height:calc(100vh - 420px); min-height:200px; }
+li.item { padding:8px 14px; border-bottom:1px solid var(--line); cursor:pointer; }
+li.item:hover { background:var(--bg); }
+li.item.selected { background:color-mix(in srgb, var(--accent) 12%, transparent); }
+.meta { color:var(--muted); font-size:12px; }
+.badge { display:inline-block; padding:0 7px; border-radius:999px; font-size:11px; background:var(--chip); color:var(--muted); margin-left:4px; }
+.badge.bad { background:var(--bad-bg); color:var(--bad); }
+.badge.prod { background:color-mix(in srgb, var(--accent) 15%, transparent); color:var(--accent); }
+.problem-title { color:var(--bad); font-weight:600; }
+.explain { margin-top:2px; }
+#timeline { max-height:calc(100vh - 380px); min-height:300px; overflow:auto; }
+.row { display:grid; grid-template-columns:86px 1fr; gap:10px; padding:6px 14px; border-bottom:1px solid var(--line); }
+.row.bad { background:var(--bad-bg); } .row.warn { background:var(--warn-bg); }
+.row time { color:var(--muted); font-variant-numeric:tabular-nums; }
+.row .what b { font-weight:600; }
+.row .ok { color:var(--ok); } .row .fail { color:var(--bad); font-weight:600; }
+details.raw summary { cursor:pointer; color:var(--muted); font-size:12px; }
+details.raw pre { margin:4px 0 0; padding:8px; background:var(--bg); border-radius:8px; overflow:auto; font-size:11px; white-space:pre-wrap; word-break:break-all; }
+.empty { padding:24px 14px; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>vdoc 日志</h1>
+  <label><input type="checkbox" id="src-local" checked> 本地</label>
+  <label><input type="checkbox" id="src-production" checked> 线上</label>
+  <label><input type="checkbox" id="only-problems"> 只看问题</label>
+  <input type="search" id="search" placeholder="搜索：会话、工具、错误…">
+  <button id="tail-btn">连接线上实时日志</button>
+  <span class="meta"><span class="dot" id="tail-dot"></span> <span id="tail-text">线上：未连接</span></span>
+</header>
+<main>
+  <section id="problems"><h2><span>问题</span><span class="meta" id="problem-count"></span></h2><ul></ul></section>
+  <section id="sessions"><h2><span>语音会话</span><span class="meta" id="session-count"></span></h2><ul></ul></section>
+  <section><h2><span id="timeline-title">选择左边的会话查看过程</span><span class="meta" id="timeline-count"></span></h2><div id="timeline"><div class="empty">还没有选择会话。</div></div></section>
+</main>
+<script>
+const all = [];
+let lastId = 0;
+let selected = null;
+const $ = id => document.getElementById(id);
+
+const EXPLAIN = [
+  [/^VOICE_REPLY_FAILED.*status=cancelled/, '任务已经完成，只是播报被打断了（通常是你在它说话时开口）。文档修改有效。'],
+  [/^VOICE_REPLY_FAILED.*during reply/, '任务已完成，但 Higgs 播报时又调用了工具，播报被判失败。文档修改有效。'],
+  [/^VOICE_REPLY_FAILED/, '任务已完成，但 Higgs 的语音播报失败。文档修改有效，不会重复执行。'],
+  [/^WORKER_FAILED_AFTER_WRITE/, 'Pi 已经改了一部分文档后失败或超时。请检查文档，别直接重做整项。'],
+  [/^WORKER_FAILED/, 'Pi 执行失败或超时（默认 90 秒），文档没有被修改。看同一会话里工具调用是否大量失败或被拒绝。'],
+  [/^TRANSCRIPTION_TIMEOUT/, '说完话 15 秒内没收到语音转写，任务没启动。可能是 Boson 转写卡住。'],
+  [/^DELEGATION_TIMEOUT/, '听到了请求，但 Higgs 15 秒内没有把任务交给 Pi。'],
+  [/^ACTOR_DELEGATION_FAILED/, 'Higgs 没按要求把任务交给 Pi（自动修复一次后仍失败）。'],
+  [/^Generation stopped: failed/, '这一轮以失败结束（跟同一时间的上一条是同一个问题）。'],
+  [/TOOL_BUDGET_EXCEEDED/, '这一轮工具调用超过 12 次上限，多出来的被拒绝。通常是模型把一个修改拆成了很多次调用。'],
+];
+const explain = text => (EXPLAIN.find(([re]) => re.test(text)) ?? [, ''])[1];
+const time = iso => iso ? new Date(iso).toLocaleTimeString('zh-CN', { hour12:false }) + '.' + String(new Date(iso).getMilliseconds()).padStart(3, '0') : '';
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+
+function isProblem(e) {
+  if (e.level === 'error' || e.level === 'warn') return !/^development default/.test(e.message);
+  if (e.message === 'ToolCallCompleted' && e.ok === false) return true;
+  if (e.message === 'ToolCallReviewed' && e.decision === 'deny') return true;
+  return false;
+}
+function problemText(e) {
+  if (e.message === 'realtime model error' || e.message === 'worker exception') return e.error ?? e.message;
+  if (e.message === 'ToolCallCompleted') return `工具 ${e.tool} 执行失败（${e.code}）`;
+  if (e.message === 'ToolCallReviewed') return `工具 ${e.tool} 被拒绝（${e.code}）`;
+  return e.error ?? e.message;
+}
+function describe(e) {
+  switch (e.message) {
+    case 'VoiceSessionGranted': return '<b>会话开始</b>（已授权）';
+    case 'VoiceSessionConnected': return e.reconnect ? '<b>重新连接</b>' : '<b>语音已连接</b>';
+    case 'UserInputRecorded': return `🗣️ <b>用户说话</b> #${e.sequence}`;
+    case 'ToolCallReviewed': return e.decision === 'deny' ? `<span class="fail">⛔ 工具 ${esc(e.tool)} 被拒绝</span>（${esc(e.code)}）` : null;
+    case 'ToolCallCompleted': return e.ok ? `<span class="ok">✓</span> 工具 <b>${esc(e.tool)}</b> 成功` : `<span class="fail">✗ 工具 ${esc(e.tool)} 失败</span>（${esc(e.code)}）`;
+    case 'TurnCompleted': return `一轮结束 · 工具 ${e.toolCalls} 次`;
+    case 'VoiceSessionEnded': return `<b>会话结束</b>（${esc(e.reason)}，${Math.round((e.durationMs ?? 0) / 1000)} 秒）`;
+    case 'voice metrics':
+      if (e.metric !== 'turn.telemetry') return null;
+      return `<span class="meta">本轮：${e.stopReason === 'completed' ? '完成' : e.stopReason === 'cancelled' ? '被打断' : e.stopReason === 'failed' ? '<span class="fail">失败</span>' : esc(e.stopReason)}${e.timeToFirstAudioMs ? ` · 首次出声 ${(e.timeToFirstAudioMs / 1000).toFixed(1)} 秒` : ''}${e.modelToolCalls ? ` · 模型调用工具 ${e.modelToolCalls} 次` : ''}</span>`;
+    case 'realtime model error': return `<span class="fail">⚠ ${esc(e.error)}</span>${explain(e.error) ? `<div class="explain meta">${esc(explain(e.error))}</div>` : ''}`;
+    case 'realtime session closed by server': return `<span class="meta">连接关闭（${esc(e.reason)}）</span>`;
+    case 'voice control refused': return `<span class="fail">语音控制被拒绝</span>（${esc(e.code)}）`;
+    default: return esc(e.message) + (e.error ? `：${esc(e.error)}` : '');
+  }
+}
+
+function visible() {
+  const q = $('search').value.trim().toLowerCase();
+  return all.filter(e => (e.source === 'local' ? $('src-local').checked : $('src-production').checked)
+    && (!q || JSON.stringify(e).toLowerCase().includes(q)));
+}
+
+function render() {
+  // Production events can arrive out of order; show everything by its own timestamp.
+  const list = visible().sort((x, y) => String(x.time).localeCompare(String(y.time)) || x.id - y.id);
+  // problems (skip the runtime's duplicate "Generation stopped" line)
+  const problems = list.filter(e => isProblem(e) && !/^Generation stopped/.test(e.error ?? '')).slice(-200).reverse();
+  $('problem-count').textContent = problems.length ? `${problems.length} 条` : '没有问题';
+  $('problems').querySelector('ul').innerHTML = problems.length ? problems.map(e => `
+    <li class="item" data-session="${esc(e.sessionId ?? '')}">
+      <div><span class="problem-title">${esc(problemText(e))}</span>${e.source === 'production' ? '<span class="badge prod">线上</span>' : '<span class="badge">本地</span>'}</div>
+      ${explain(problemText(e)) ? `<div class="explain">${esc(explain(problemText(e)))}</div>` : ''}
+      <div class="meta">${new Date(e.time).toLocaleString('zh-CN', { hour12:false })} · ${esc(e.sessionId ?? '无会话')}</div>
+    </li>`).join('') : '<div class="empty">目前没有警告或错误。</div>';
+
+  // sessions
+  const sessions = new Map();
+  for (const e of list) {
+    if (!e.sessionId) continue;
+    const s = sessions.get(e.sessionId) ?? { id: e.sessionId, source: e.source, first: e.time, last: e.time, inputs: 0, problems: 0, tools: 0, ended: false };
+    s.last = e.time;
+    if (e.message === 'UserInputRecorded') s.inputs++;
+    if (e.message === 'ToolCallCompleted') s.tools++;
+    if (e.message === 'VoiceSessionEnded') s.ended = true;
+    if (isProblem(e) && !/^Generation stopped/.test(e.error ?? '')) s.problems++;
+    sessions.set(e.sessionId, s);
+  }
+  const ordered = [...sessions.values()].sort((a, b) => b.last.localeCompare(a.last));
+  if ($('only-problems').checked) ordered.splice(0, ordered.length, ...ordered.filter(s => s.problems));
+  $('session-count').textContent = `${ordered.length} 个`;
+  $('sessions').querySelector('ul').innerHTML = ordered.length ? ordered.map(s => `
+    <li class="item ${s.id === selected ? 'selected' : ''}" data-session="${esc(s.id)}">
+      <div>${new Date(s.first).toLocaleString('zh-CN', { hour12:false })}${s.source === 'production' ? '<span class="badge prod">线上</span>' : '<span class="badge">本地</span>'}${s.problems ? `<span class="badge bad">${s.problems} 个问题</span>` : ''}${s.ended ? '' : '<span class="badge">进行中</span>'}</div>
+      <div class="meta">说话 ${s.inputs} 次 · 工具 ${s.tools} 次 · ${esc(s.id.slice(0, 14))}…</div>
+    </li>`).join('') : '<div class="empty">还没有语音会话日志。开始用语音后会自动出现。</div>';
+
+  // timeline
+  if (!selected) return;
+  const rows = list.filter(e => e.sessionId === selected).filter(e => !$('only-problems').checked || isProblem(e));
+  $('timeline-title').textContent = `会话 ${selected}`;
+  $('timeline-count').textContent = `${rows.length} 条`;
+  const timeline = $('timeline');
+  const atBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 40;
+  timeline.innerHTML = rows.map(e => {
+    const text = describe(e);
+    if (text === null) return '';
+    const cls = isProblem(e) ? (e.level === 'warn' || e.level === 'error' ? 'bad' : 'warn') : '';
+    const { id, source, ...raw } = e;
+    return `<div class="row ${cls}"><time>${time(e.time)}</time><div class="what">${text}<details class="raw"><summary>原始日志</summary><pre>${esc(JSON.stringify(raw, null, 2))}</pre></details></div></div>`;
+  }).join('') || '<div class="empty">没有符合条件的记录。</div>';
+  if (atBottom) timeline.scrollTop = timeline.scrollHeight;
+}
+
+let pending = false;
+const schedule = () => { if (!pending) { pending = true; requestAnimationFrame(() => { pending = false; render(); }); } };
+function setTail({ status, error }) {
+  $('tail-dot').className = `dot ${status}`;
+  $('tail-text').textContent = { running: '线上：实时接收中', starting: '线上：连接中…', failed: `线上：连接失败 ${error ?? ''}`, stopped: '线上：未连接' }[status] ?? status;
+  $('tail-btn').textContent = status === 'running' || status === 'starting' ? '断开线上日志' : '连接线上实时日志';
+  $('tail-btn').dataset.action = status === 'running' || status === 'starting' ? 'stop' : 'start';
+}
+
+document.addEventListener('click', event => {
+  const item = event.target.closest('li.item');
+  if (item?.dataset.session) { selected = item.dataset.session; render(); }
+});
+for (const id of ['src-local', 'src-production', 'only-problems']) $(id).addEventListener('change', render);
+$('search').addEventListener('input', render);
+$('tail-btn').addEventListener('click', async () => {
+  const response = await fetch(`/api/production?action=${$('tail-btn').dataset.action ?? 'start'}`, { method: 'POST' });
+  setTail(await response.json());
+});
+
+(async () => {
+  const first = await (await fetch('/api/entries')).json();
+  all.push(...first.entries); lastId = all.at(-1)?.id ?? 0; setTail(first.tail);
+  const latest = all.filter(e => e.sessionId).at(-1); if (latest) selected = latest.sessionId;
+  render();
+  const stream = new EventSource('/api/stream');
+  stream.onmessage = message => { const e = JSON.parse(message.data); if (e.id > lastId) { all.push(e); lastId = e.id; schedule(); } };
+  stream.addEventListener('tail', message => setTail(JSON.parse(message.data)));
+})();
+</script>
+</body>
+</html>
