@@ -4,6 +4,7 @@ import { createAssistantMessageEventStream, type AssistantMessage } from '@earen
 import type { StreamFn } from '@earendil-works/pi-agent-core';
 import { RealtimeError, startSession, type AgentSession, type ToolSpec } from '@vrealtime/core';
 import { fakeModel, type FakeModel } from '@vrealtime/testing';
+import { HIGH_RISK_CONFIRMATION_MESSAGE } from '@vdoc-server/domain';
 import { createPiWorker, delegatedModel, type UtteranceJudge, type WorkerRunner } from '../src';
 
 const cleanup: (() => Promise<void>)[] = [];
@@ -56,7 +57,7 @@ function speakerModel(status: 'done' | 'failed' | 'cancelled' = 'done') {
     });
   } });
 }
-async function setup(worker: WorkerRunner, options: { beforeToolCall?: (name: string) => boolean; timeout?: number; transcriptTimeout?: number; finishTools?: boolean; judge?: UtteranceJudge; actor?: FakeModel; text?: string | null } = {}) {
+async function setup(worker: WorkerRunner, options: { beforeToolCall?: (name: string) => boolean | string; timeout?: number; transcriptTimeout?: number; finishTools?: boolean; judge?: UtteranceJudge; actor?: FakeModel; text?: string | null } = {}) {
   const actor = options.actor ?? speakerModel();
   const model = delegatedModel(actor, worker, options.timeout ?? 1000, options.transcriptTimeout ?? 1000, options.judge);
   const calls: { name: string; callId: string; args: unknown }[] = [];
@@ -67,7 +68,10 @@ async function setup(worker: WorkerRunner, options: { beforeToolCall?: (name: st
   let session!: AgentSession;
   session = await startSession({ model, instructions: 'Worker document instructions.', clientTools: 'accept', maxContinuations: 16,
     hooks: {
-      beforeToolCall: call => options.beforeToolCall?.(call.name) === false ? { action: 'reject', message: 'Denied by policy' } : { action: 'allow' },
+      beforeToolCall: call => {
+        const verdict = options.beforeToolCall?.(call.name);
+        return verdict === false ? { action: 'reject', message: 'Denied by policy' } : typeof verdict === 'string' ? { action: 'reject', message: verdict } : { action: 'allow' };
+      },
       onTurnEnd: ended,
     },
   }, { clientTools: tools });
@@ -473,4 +477,41 @@ it('reports already completed edits if Pi fails after applying a write, without 
   expect(h.errors[0]).not.toContain('private provider error details');
   expect(runs).toBe(1);
   expect(h.voice).toEqual([]);
+});
+
+it('carries an edit held for confirmation into the next task with its exact arguments', async () => {
+  const prompts: string[] = [];
+  const replace = { expectedSessionId: 's', expectedRevision: 3, operations: [{ type: 'text.findReplace', find: '足球鞋', replace: 'football boots' }] };
+  let confirmed = false;
+  const worker: WorkerRunner = { async run(request, context) {
+    prompts.push(request.prompt); context.emit({ type: 'start' });
+    if (prompts.length === 1) {
+      await context.execute('replace', 'insert_structured_article', replace);
+      context.emit({ type: 'turn-end', usage: { inputTokens: 1, outputTokens: 1 } });
+      context.emit({ type: 'start' }); context.emit({ type: 'text', delta: '要全部替换吗？' }); return '要全部替换吗？';
+    }
+    context.emit({ type: 'text', delta: '好的' }); return '好的';
+  } };
+  // The first attempt is held for confirmation, exactly as the governance policy answers it.
+  const h = await setup(worker, { beforeToolCall: () => confirmed ? true : HIGH_RISK_CONFIRMATION_MESSAGE, text: '把足球鞋换成英文' });
+  await expect.poll(() => h.ended.mock.calls.length).toBe(1);
+  confirmed = true;
+  h.session.sendText('可以，确认');
+  await expect.poll(() => prompts.length).toBe(2);
+  const previous = JSON.parse(prompts[1]!).previousTasks as { awaitingConfirmation?: unknown }[];
+  expect(previous.at(-1)).toMatchObject({ request: '把足球鞋换成英文', reply: '要全部替换吗？', awaitingConfirmation: { tool: 'insert_structured_article', arguments: replace } });
+});
+
+it('does not carry an ordinary rejection forward as awaiting confirmation', async () => {
+  const prompts: string[] = [];
+  const worker: WorkerRunner = { async run(request, context) {
+    prompts.push(request.prompt); context.emit({ type: 'start' });
+    if (prompts.length === 1) { await context.execute('w', 'insert_structured_article', { expectedRevision: 1 }); context.emit({ type: 'turn-end', usage: { inputTokens: 1, outputTokens: 1 } }); context.emit({ type: 'start' }); }
+    context.emit({ type: 'text', delta: '好' }); return '好';
+  } };
+  const h = await setup(worker, { beforeToolCall: () => false });
+  await expect.poll(() => h.ended.mock.calls.length).toBe(1);
+  h.session.sendText('下一件事');
+  await expect.poll(() => prompts.length).toBe(2);
+  expect(JSON.parse(prompts[1]!).previousTasks.at(-1)).not.toHaveProperty('awaitingConfirmation');
 });

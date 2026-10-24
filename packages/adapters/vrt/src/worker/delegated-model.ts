@@ -1,4 +1,5 @@
 import { Emitter, type AudioFormat, type EventOf, type EventType, type RealtimeEvent, type RealtimeModel, type RealtimeSession, type SessionConfig } from '@vrealtime/core';
+import { HIGH_RISK_CONFIRMATION_MESSAGE } from '@vdoc-server/domain';
 import type { WorkerEvent, WorkerRunner } from './pi-worker';
 import { quickIntent, type UtteranceIntent, type UtteranceJudge } from './utterance-judge';
 
@@ -26,10 +27,13 @@ Put long articles in insert_structured_article arguments, not in spoken text. Ne
 When one change applies to many places (for example highlight every mention of a word), send ONE apply_document_operations call that lists every operation. Never send one call per place or several calls at once: each successful call changes the document revision, so the others fail as stale.
 For partial deletion, read the document and use delete_test_blocks when available with exactly the requested stable block ids. Never use undo_turn to approximate deleting only part of an article: undo affects the entire prior edit.
 While you work, the user may speak again. That arrives as a message {"userUpdate": "..."}: their latest words about the current task. If it repeats or confirms the task, continue without redoing completed steps. If it adds or corrects details, follow it. If it asks to stop or cancel, make no further changes and say so briefly.
+Some edits need the user's confirmation first: the tool result then asks you to confirm. Ask in one short sentence and finish.
+Each task is new, so previousTasks carries that call as awaitingConfirmation. If the user now agrees, first read the document, then make exactly that call again with identical arguments (only expectedSessionId/expectedRevision may change). If they decline or ask for something else, do not make it.
 If tools fail, say what failed. Do not invent web sources or claim research: only tools actually provided are available.
 All your text deltas are public progress/answers. Do not output private reasoning. A final response is completion only when the user's task is fulfilled.`;
 
-interface PendingTool { name: string; resolve(value: unknown): void; reject(error: Error): void }
+interface PendingTool { name: string; arguments: unknown; resolve(value: unknown): void; reject(error: Error): void }
+interface PastTask { request: string; reply: string; awaitingConfirmation?: { tool: string; arguments: unknown } }
 interface Run {
   controller: AbortController;
   responseId?: string;
@@ -39,6 +43,8 @@ interface Run {
   request: string;
   timer: ReturnType<typeof setTimeout>;
   steer?: (message: string) => void;
+  /** The last call the governance policy held back until the user confirms it. */
+  awaitingConfirmation?: { tool: string; arguments: unknown };
 }
 const WRITE_TOOLS = ['insert_structured_article', 'insert_test_table', 'delete_test_blocks', 'apply_document_operations', 'undo_turn', 'create_test_document'];
 
@@ -78,7 +84,7 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
       const retire = (id: string) => { retiredResponses.add(id); if (retiredResponses.size > 128) retiredResponses.delete(retiredResponses.values().next().value!); };
       const stopEndingAudio = () => { clearInterval(endingAudio); endingAudio = undefined; };
       const clearTranscriptTimer = () => { clearTimeout(transcriptTimer); transcriptTimer = undefined; };
-      const history: { request: string; reply: string }[] = [];
+      const history: PastTask[] = [];
       const unsubscribers: (() => void)[] = [];
       const emit = (event: RealtimeEvent) => { if (!closed) emitter.emit(event); };
       const live = (run: Run) => !closed && active === run && !run.controller.signal.aborted;
@@ -173,7 +179,7 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
           execute(callId, name, args) {
             if (!live(run) || !run.responseId || !tools.some(tool => tool.name === name) || run.pending.has(callId)) return Promise.reject(new Error('Invalid or interrupted worker tool call'));
             return new Promise((resolve, reject) => {
-              run.pending.set(callId, { name, resolve, reject });
+              run.pending.set(callId, { name, arguments: args, resolve, reject });
               run.dispatched++;
               emit({ type: 'tool.call', responseId: run.responseId!, callId, name, arguments: args });
             });
@@ -185,7 +191,9 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
           clearTimeout(run.timer);
           active = undefined;
           pendingReply = reply; lastCompletedWrites = run.completedWrites;
-          history.push({ request: request.slice(0, 2000), reply: reply.slice(0, 1000) });
+          // The held-back call goes forward verbatim: governance only lets the identical call through after a yes.
+          const held = run.awaitingConfirmation && JSON.stringify(run.awaitingConfirmation).length <= 16_000 ? { awaitingConfirmation: run.awaitingConfirmation } : {};
+          history.push({ request: request.slice(0, 2000), reply: reply.slice(0, 1000), ...held });
           if (history.length > 8) history.shift();
           // No tool calls in the final Pi response: pause asks vRT for the next response, which speaks the reply.
           emit({ type: 'response.end', responseId, status: 'done', stopReason: 'pause' });
@@ -320,6 +328,7 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
           if (!pending) return; // Late/cancelled worker results never reach a new task.
           active!.pending.delete(callId);
           if (WRITE_TOOLS.includes(pending.name) && typeof output === 'object' && output !== null && 'ok' in output && output.ok === true) active!.completedWrites++;
+          if (JSON.stringify(output ?? null).includes(HIGH_RISK_CONFIRMATION_MESSAGE)) active!.awaitingConfirmation = { tool: pending.name, arguments: pending.arguments };
           pending.resolve(output);
         },
         on: (type, listener) => emitter.on(type, listener),

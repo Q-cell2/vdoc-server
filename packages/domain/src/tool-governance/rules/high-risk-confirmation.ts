@@ -1,6 +1,9 @@
 import type { ToolReviewContext, ToolRule } from '../tool-policy';
 import type { ToolDecision } from '../tool-decision';
 
+/** Sent back instead of running the edit; adapters recognise it to carry the call over to the user's answer. */
+export const HIGH_RISK_CONFIRMATION_MESSAGE = 'This edit can remove or rewrite a lot of content. Ask the user to confirm in one short sentence. Only if they clearly agree, make exactly the same call again.';
+
 /**
  * Destructive edits need the user's explicit yes: the first request is turned
  * into a question, and the identical request is allowed only in a later turn,
@@ -13,7 +16,7 @@ export class HighRiskConfirmationRule implements ToolRule {
     if (assessment.risk !== 'high' || confirmedInEarlierTurn) return undefined;
     return {
       kind: 'confirm', risk: 'high',
-      message: 'This edit can remove or rewrite a lot of content. Ask the user to confirm in one short sentence. Only if they clearly agree, make exactly the same call again.',
+      message: HIGH_RISK_CONFIRMATION_MESSAGE,
     };
   }
 }

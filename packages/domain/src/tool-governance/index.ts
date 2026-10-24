@@ -4,7 +4,7 @@ export type { ToolDecision, ToolDenialCode } from './tool-decision';
 export { ToolPolicy, type ToolReviewContext, type ToolRule } from './tool-policy';
 export { KnownToolRule } from './rules/known-tool';
 export { ToolCallBudgetRule } from './rules/tool-call-budget';
-export { HighRiskConfirmationRule } from './rules/high-risk-confirmation';
+export { HighRiskConfirmationRule, HIGH_RISK_CONFIRMATION_MESSAGE } from './rules/high-risk-confirmation';
 
 import { ToolPolicy } from './tool-policy';
 import { KnownToolRule } from './rules/known-tool';
