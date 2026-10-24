@@ -55,9 +55,13 @@ const session = await connect(`wss://voice.example.com${created.realtimePath}`, 
 | `POST` | `/v1/documents/{documentId}/voice-sessions/{sessionId}/grants` | 重新签发短期授权（重连前调用） |
 | `DELETE` | `/v1/documents/{documentId}/voice-sessions/{sessionId}` | 结束会话并断开实时连接 |
 | `GET` (WebSocket) | `/v1/documents/{documentId}/voice-sessions/{sessionId}/realtime` | vRealTime 协议；授权放在 `hello.auth` |
+| `POST` | `/v1/documents/{documentId}/voice-sessions/{sessionId}/tasks` | `worker-speaker` 会话：用 speaker 的 `ask_assistant` 调用（`callId`、`arguments`）和客户端文档工具（`tools`）启动 Claude worker 任务 |
+| `POST` | `/v1/documents/{documentId}/voice-sessions/{sessionId}/tasks/{taskId}/results` | 提交 worker 要求的工具结果，直到返回 `status: "done"` 和要说的 `reply` |
 | `GET` | `/healthz` | 健康检查 |
 
 实时连接被拒绝时的关闭码：`4401` 授权无效，`4404` 会话不存在，`4410` 会话已结束。
+
+创建会话时 `profileId` 选择思考强度：默认 `editing-assistant`；`editing-assistant-web-search`（低）让实时模型自己编辑，并用 Boson 原生 `web_search` 先搜索再写；`worker-speaker`（高）让实时模型只负责说话，把每个请求通过 `ask_assistant` 交给 Claude（Claude 自带 web search，通过客户端文档工具编辑）。worker 的每个工具调用都按 speaker 那一轮审核，工具上限和危险编辑确认照旧生效。`worker-speaker` 只在配置了 `ANTHROPIC_API_KEY` 时可用。
 
 服务端按文档隔离会话与工具权限，保留单次会话时长、轮次和工具调用限制。
 不再维护跨文档并发配额、每小时创建额度或使用量结算。
@@ -75,6 +79,7 @@ const session = await connect(`wss://voice.example.com${created.realtimePath}`, 
 | `VDOC_SERVER_ALLOWED_ORIGINS` | 允许跨域访问的浏览器来源，逗号分隔 |
 | `VDOC_SERVER_MODEL` | `boson`、`openai`、`cascade-claude`、`fake`，可写成 `boson:<model>`。`cascade-claude` 是语音识别 + Claude + 语音合成，默认 `claude-opus-5-5`，可写成 `cascade-claude:<Claude 模型>` |
 | `BOSON_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | 模型密钥。`cascade-claude` 需要 `ANTHROPIC_API_KEY`（Claude）和 `OPENAI_API_KEY`（语音识别与合成） |
+| `VDOC_SERVER_WORKER_MODEL` | `worker-speaker` 背后的 Claude 模型，默认 `claude-opus-5-5`；需要 `ANTHROPIC_API_KEY` |
 | `VDOC_SERVER_CONCURRENCY` | 同一文档已有会话时：`supersede`（默认，顶替）或 `reject` |
 | `VDOC_SERVER_GRANT_TTL_SECONDS` | 授权有效期，默认 60 |
 | `VDOC_SERVER_MAX_SESSION_MINUTES` | 会话最长时长，默认 30 |
