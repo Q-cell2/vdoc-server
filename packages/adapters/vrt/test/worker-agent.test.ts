@@ -502,6 +502,34 @@ it('carries an edit held for confirmation into the next task with its exact argu
   expect(previous.at(-1)).toMatchObject({ request: '把足球鞋换成英文', reply: '要全部替换吗？', awaitingConfirmation: { tool: 'insert_structured_article', arguments: replace } });
 });
 
+it('replays a confirmed edit against the revision this task read, not the one it was held with', async () => {
+  const held = { expectedSessionId: 's', expectedRevision: 3, operations: [{ type: 'block.delete' }] };
+  const other = { expectedSessionId: 's', expectedRevision: 3, operations: [{ type: 'text.style' }] };
+  let runs = 0;
+  let confirmed = false;
+  const worker: WorkerRunner = { async run(_request, context) {
+    runs++; context.emit({ type: 'start' });
+    if (runs === 1) {
+      await context.execute('held', 'insert_structured_article', held);
+      context.emit({ type: 'turn-end', usage: { inputTokens: 1, outputTokens: 1 } });
+      context.emit({ type: 'start' }); context.emit({ type: 'text', delta: '要删除吗？' }); return '要删除吗？';
+    }
+    // Pi rereads (the test client reports revision 7) and copies the held call verbatim, old revision included.
+    await context.execute('read', 'read_document', {});
+    await context.execute('replay', 'insert_structured_article', held);
+    await context.execute('unrelated', 'insert_structured_article', other);
+    context.emit({ type: 'text', delta: '已删除' }); return '已删除';
+  } };
+  const h = await setup(worker, { beforeToolCall: () => confirmed ? true : HIGH_RISK_CONFIRMATION_MESSAGE, text: '删掉这一节' });
+  await expect.poll(() => h.ended.mock.calls.length).toBe(1);
+  confirmed = true;
+  h.session.sendText('对，确认');
+  await expect.poll(() => h.calls.length).toBe(3);
+  expect(h.calls[1]).toMatchObject({ name: 'insert_structured_article', args: { ...held, expectedRevision: 7 } });
+  // Only the held call is refreshed; any other edit keeps the precondition Pi gave it.
+  expect(h.calls[2]).toMatchObject({ args: other });
+});
+
 it('does not carry an ordinary rejection forward as awaiting confirmation', async () => {
   const prompts: string[] = [];
   const worker: WorkerRunner = { async run(request, context) {

@@ -1,5 +1,5 @@
 import { Emitter, type AudioFormat, type EventOf, type EventType, type RealtimeEvent, type RealtimeModel, type RealtimeSession, type SessionConfig } from '@vrealtime/core';
-import { HIGH_RISK_CONFIRMATION_MESSAGE } from '@vdoc-server/domain';
+import { fingerprint, HIGH_RISK_CONFIRMATION_MESSAGE } from '@vdoc-server/domain';
 import type { WorkerEvent, WorkerRunner } from './pi-worker';
 import { quickIntent, type UtteranceIntent, type UtteranceJudge } from './utterance-judge';
 
@@ -45,6 +45,18 @@ interface Run {
   steer?: (message: string) => void;
   /** The last call the governance policy held back until the user confirms it. */
   awaitingConfirmation?: { tool: string; arguments: unknown };
+  /** The latest document session and revision this task's tool results reported. */
+  document: { sessionId?: string; revision?: number };
+}
+/** The document version a tool result reports (`{ sessionId, revision }`), directly or as a client result's output. */
+function reportedVersion(output: unknown): Run['document'] {
+  const value = output !== null && typeof output === 'object' && 'output' in output ? (output as { output: unknown }).output : output;
+  if (value === null || typeof value !== 'object') return {};
+  const { sessionId, revision } = value as { sessionId?: unknown; revision?: unknown };
+  return {
+    ...(typeof sessionId === 'string' && sessionId ? { sessionId } : {}),
+    ...(typeof revision === 'number' && Number.isSafeInteger(revision) && revision >= 0 ? { revision } : {}),
+  };
 }
 const WRITE_TOOLS = ['insert_structured_article', 'insert_test_table', 'delete_test_blocks', 'apply_document_operations', 'undo_turn', 'create_test_document'];
 
@@ -162,7 +174,7 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
         clearTranscriptTimer(); stopEndingAudio(); speechPending = false; manuallyFinished = false;
         lastCompletedWrites = 0;
         const controller = new AbortController();
-        const run: Run = { controller, request, dispatched: 0, completedWrites: 0, pending: new Map(), timer: setTimeout(() => fail(run), timeoutMs) };
+        const run: Run = { controller, request, dispatched: 0, completedWrites: 0, pending: new Map(), timer: setTimeout(() => fail(run), timeoutMs), document: {} };
         active = run;
         run.responseId = `worker-${crypto.randomUUID()}`;
         emit({ type: 'response.start', responseId: run.responseId });
@@ -178,10 +190,11 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
           },
           execute(callId, name, args) {
             if (!live(run) || !run.responseId || !tools.some(tool => tool.name === name) || run.pending.has(callId)) return Promise.reject(new Error('Invalid or interrupted worker tool call'));
+            const sent = refreshConfirmed(run, name, args);
             return new Promise((resolve, reject) => {
-              run.pending.set(callId, { name, arguments: args, resolve, reject });
+              run.pending.set(callId, { name, arguments: sent, resolve, reject });
               run.dispatched++;
-              emit({ type: 'tool.call', responseId: run.responseId!, callId, name, arguments: args });
+              emit({ type: 'tool.call', responseId: run.responseId!, callId, name, arguments: sent });
             });
           },
         }).then(reply => {
@@ -198,6 +211,24 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
           // No tool calls in the final Pi response: pause asks vRT for the next response, which speaks the reply.
           emit({ type: 'response.end', responseId, status: 'done', stopReason: 'pause' });
         }).catch(() => fail(run));
+      };
+      /**
+       * The user's yes replays the call held back in the previous task. Pi often copies it with the
+       * revision it had then, which the document rejects as stale after any edit since. The call is
+       * still the one governance holds (its fingerprint ignores these fields), so only its version
+       * preconditions are brought up to date, and only with what this task has read.
+       */
+      const refreshConfirmed = (run: Run, name: string, args: unknown): unknown => {
+        const held = history.at(-1)?.awaitingConfirmation;
+        if (!held || held.tool !== name || args === null || typeof args !== 'object' || Array.isArray(args)) return args;
+        if (fingerprint({ name, arguments: args }) !== fingerprint({ name, arguments: held.arguments })) return args;
+        const call = args as Record<string, unknown>;
+        const { sessionId, revision } = run.document;
+        return {
+          ...call,
+          ...('expectedRevision' in call && revision !== undefined ? { expectedRevision: revision } : {}),
+          ...('expectedSessionId' in call && sessionId !== undefined ? { expectedSessionId: sessionId } : {}),
+        };
       };
       const maybeBegin = () => {
         if (inputKind === 'voice' && speechEnded && lastUserText.trim() && !active && pendingReply === undefined && !speech) begin(lastUserText);
@@ -327,6 +358,7 @@ export function delegatedModel(actor: RealtimeModel, worker: WorkerRunner, timeo
           const pending = active?.pending.get(callId);
           if (!pending) return; // Late/cancelled worker results never reach a new task.
           active!.pending.delete(callId);
+          Object.assign(active!.document, reportedVersion(output));
           if (WRITE_TOOLS.includes(pending.name) && typeof output === 'object' && output !== null && 'ok' in output && output.ok === true) active!.completedWrites++;
           if (JSON.stringify(output ?? null).includes(HIGH_RISK_CONFIRMATION_MESSAGE)) active!.awaitingConfirmation = { tool: pending.name, arguments: pending.arguments };
           pending.resolve(output);
