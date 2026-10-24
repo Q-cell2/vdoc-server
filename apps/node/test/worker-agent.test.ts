@@ -17,7 +17,7 @@ it.each([12, 1])('routes the worker through real HTTP/WS, SDK and the %i-call po
   let speaking = false;
   let count = 0;
   const actor = fakeModel({ onCommand(command, session) {
-    if (command.type === 'submitToolResult') speaking = true;
+    if (command.type === 'submitToolResult') speaking = 'spokenReply' in (command.output as object);
     if (command.type !== 'respond') return;
     const isReply = speaking; speaking = false;
     const responseId = `actor-${++count}`;
@@ -80,7 +80,7 @@ it('continues the same worker write after pausing capture, despite late backgrou
   let count = 0;
   const actor = fakeModel({ onCommand(command, session) {
     if (command.type === 'sendAudio' && command.chunk.data.some(byte => byte !== 0)) session.emit({ type: 'input.speech.start', atMs: 1 });
-    if (command.type === 'submitToolResult') reply = true;
+    if (command.type === 'submitToolResult') reply = 'spokenReply' in (command.output as object);
     if (command.type !== 'respond') return;
     const speaking = reply; reply = false;
     const responseId = `performer-${++count}`;
@@ -138,11 +138,11 @@ it('continues the same worker write after pausing capture, despite late backgrou
 });
 
 
-it('renders article deltas in the document before a complete tool call, then commits exactly once over real HTTP/WS', async () => {
+it.each(['complete', 'interrupt', 'voice-continue', 'voice-stop'] as const)('streams Pi text and article deltas before completion over real HTTP/WS: %s', async outcome => {
   let reply = false;
   let count = 0;
   const actor = fakeModel({ onCommand(command, session) {
-    if (command.type === 'submitToolResult') reply = true;
+    if (command.type === 'submitToolResult') reply = 'spokenReply' in (command.output as object);
     if (command.type !== 'respond') return;
     const speaking = reply; reply = false;
     const responseId = `stream-actor-${++count}`;
@@ -154,7 +154,11 @@ it('renders article deltas in the document before a complete tool call, then com
   } });
   let release!: () => void;
   const barrier = new Promise<void>(resolve => { release = resolve; });
+  const updates: string[] = [];
+  let aborted = false;
   const worker: WorkerRunner = { async run(_request, context) {
+    context.onSteer?.(message => updates.push(message));
+    context.signal.addEventListener('abort', () => { aborted = true; });
     context.emit({ type: 'start' });
     const before = await context.execute('read', 'read_document', {}) as { sessionId: string; revision: number };
     context.emit({ type: 'turn-end', usage: { inputTokens: 1, outputTokens: 1 } });
@@ -163,6 +167,7 @@ it('renders article deltas in the document before a complete tool call, then com
     const raw = JSON.stringify(input);
     const split = raw.indexOf('正在逐步生成') + 4;
     context.emit({ type: 'arguments', callId: 'write', name: 'insert_structured_article', delta: raw.slice(0, split) });
+    context.emit({ type: 'text', delta: '正文生成中。' });
     await barrier; context.signal.throwIfAborted();
     context.emit({ type: 'arguments', callId: 'write', name: 'insert_structured_article', delta: raw.slice(split) });
     await context.execute('write', 'insert_structured_article', input);
@@ -180,6 +185,8 @@ it('renders article deltas in the document before a complete tool call, then com
   const preview = createArticleStream(() => doc.read(), () => {});
   const client = await connect(`ws://127.0.0.1:${running.port}${grant.realtimePath}`, { auth: grant.grant.token, reconnect: false, audio: { input: false, output: false }, tools: doc.tools });
   cleanups.push(() => client.close());
+  const text: string[] = [];
+  client.on('text', event => { if (!event.delta.startsWith('[执行阶段]')) text.push(event.delta); });
   client.on('tool.stream', event => preview.receive(event));
   client.on('tool.result', event => preview.finish(event.callId, event.result.ok));
   client.sendText('写文章');
@@ -187,10 +194,33 @@ it('renders article deltas in the document before a complete tool call, then com
     await expect.poll(() => preview.view()?.blocks[1]?.text).toBe('正在逐步');
     expect(doc.read().revision).toBe(0);
     expect(doc.read().blocks[0]!.text).toBe('');
+    expect(text.join('')).toBe('正文生成中。');
+    expect(actor.session.commandsOf('submitToolResult')[0]!.output).toEqual({ ok: true, status: 'accepted' });
+    if (outcome === 'interrupt') client.interrupt('keyboard');
+    if (outcome === 'voice-continue' || outcome === 'voice-stop') {
+      actor.session.emit({ type: 'input.speech.start', atMs: 10 });
+      actor.session.emit({ type: 'input.speech.end', atMs: 20 });
+      actor.session.emit({ type: 'input.transcript', itemId: 'mid-stream', text: outcome === 'voice-stop' ? '停止' : '保留第一段的内容', final: true });
+      if (outcome === 'voice-continue') {
+        expect(updates).toEqual([JSON.stringify({ userUpdate: '保留第一段的内容' })]);
+        expect(aborted).toBe(false);
+        expect(preview.view()?.phase).toBe('streaming');
+      } else await expect.poll(() => preview.view()?.phase).toBe('cancelled');
+    }
     release();
-    await expect.poll(() => doc.read().revision).toBe(1);
-    await expect.poll(() => preview.view()).toBeUndefined();
-    expect(doc.read().blocks.map(block => block.text)).toEqual(['流水文章', '正在逐步生成的正文。']);
+    if (outcome !== 'voice-stop') await expect.poll(() => client.state).toBe('idle');
+    if (outcome === 'interrupt' || outcome === 'voice-stop') {
+      await expect.poll(() => aborted).toBe(true);
+      expect(preview.view()?.phase).toBe('cancelled');
+      expect(doc.read().revision).toBe(0);
+      expect(text.join('')).toBe('正文生成中。');
+    } else {
+      expect(doc.read().revision).toBe(1);
+      expect(preview.view()).toBeUndefined();
+      expect(doc.read().blocks.map(block => block.text)).toEqual(['流水文章', '正在逐步生成的正文。']);
+      expect(text.join('')).toBe('正文生成中。已写入');
+    }
+    expect(actor.session.commandsOf('respond')).toHaveLength(1);
   } finally { release(); }
 });
 
@@ -208,7 +238,7 @@ it('finishes speech immediately on pause over the authenticated context channel,
       session.emit({ type: 'input.transcript', itemId: 'u', text: '写一篇关于 Python 的文章', final: true });
       // Deliberately do not start an automatic response: exercise the bounded fallback.
     }
-    if (command.type === 'submitToolResult') reply = true;
+    if (command.type === 'submitToolResult') reply = 'spokenReply' in (command.output as object);
     if (command.type !== 'respond') return;
     const speaking = reply; reply = false;
     const responseId = `speech-${++count}`;
@@ -261,7 +291,7 @@ it.each(['development', 'test'])('governs partial deletion in %s over real HTTP/
   let reply = false;
   let serial = 0;
   const actor = fakeModel({ onCommand(command, session) {
-    if (command.type === 'submitToolResult') reply = true;
+    if (command.type === 'submitToolResult') reply = 'spokenReply' in (command.output as object);
     if (command.type !== 'respond') return;
     const speaking = reply; reply = false;
     const responseId = `delete-${++serial}`;

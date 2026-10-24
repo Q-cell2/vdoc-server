@@ -1,8 +1,8 @@
-# Higgs performer + Pi worker agent
+# Higgs request router + Pi worker agent
 
 ## 角色与部署
 
-`VDOC_SERVER_MODEL=boson-worker` 把 Higgs Realtime 变成只有 `run_worker_agent` 的前台演员。
+`VDOC_SERVER_MODEL=boson-worker` 把 Higgs Realtime 变成只有 `run_worker_agent` 的需求路由器。
 后台使用固定版本 `@earendil-works/pi-agent-core` / `pi-ai` 1.4.0，默认 Claude Sonnet 5.5。
 同时存在 Boson 与 Anthropic 密钥、且未指定模型时，此模式为默认。显式 `boson` 保留旧模式。
 Node 需要 22.19+；Cloudflare 复用同一模型适配器，密钥来自 Worker Secrets。
@@ -20,7 +20,8 @@ Node 需要 22.19+；Cloudflare 复用同一模型适配器，密钥来自 Worke
                  ↓ 实际工具调用事件
                vRT → Server 权限/预算/确认 → vdoc 原有工具
                  ↑ 真实工具结果
-               Pi → 最终短回复 → Higgs 语音表演
+               Pi → text / tool.stream → WebSocket → 客户端
+               Pi 完成 → response.end(completed)，不再请求 Higgs 回复
 ```
 
 Pi 是唯一的后台循环负责人。组合模型声明工具结果后自行续生成，vRT 不再额外请求一轮；
@@ -28,16 +29,22 @@ Pi 是唯一的后台循环负责人。组合模型声明工具结果后自行�
 前台委派不会被当成一个长时间运行的普通服务端工具，否则会阻塞后续文档工具造成死锁。
 未修改 vRT 或 vdoc 源码。
 
-前台在后台完成前生成的语音被抑制；不允许前台工具直接访问文档，也不向它发送文档工具定义和工具结果。
-最终只发送 `{ spokenReply }` 给前台，提示它逐字发声。Realtime 模型的逐字忠实度仍需真实 Boson 验证，
-并非程序级保证；如果产品要求严格逐字朗读，应另选 Boson TTS 路径。
+Higgs 仅接收和委派需求，使用 text 输出模式；其自身文字、音频和输出转写均不向客户端转发。
+Pi 启动时立即向 Higgs 回填 `{ ok: true, status: "accepted" }`，并设置 `respond:false`，关闭委派调用。
+这只表示任务已接收，不表示文档修改成功。Pi 的进度、工具结果和最终回复直接发给客户端，不回填给 Higgs，也不触发额外的播报轮次。
 
 ## 流式与提交
 
 Pi 的 text delta 转成既有文字事件；toolcall delta 转成既有工具参数预览。
 私有 thinking 事件不转发。只有 Pi 完成参数校验并执行工具时，才发出实际 tool.call。
-预览不会修改文档。vdoc 是否展示 text/tool.stream 取决于现有界面，本次没有新增 UI。
-Higgs 在最终结果到达后输出流式语音；本版不逐句朗读后台中间进度，也不朗读长文章。
+预览不会修改文档。调试页消费 text/tool.stream 并实时展示文章和表格；其他客户端需要接入对应事件。
+本版只返回文字和文档工具流，不朗读中间进度或最终结果。
+
+`cascade-claude` 同样实时转发文字和工具参数：适配器跟踪 Claude content block 的 index/callId/name，
+将 input_json_delta 转成 tool-call-delta，再由 vRT 经现有 WebSocket 发出 tool.stream。
+工具参数流只用于预览，完整工具调用仍经过 finalMessage 和 fallback 过滤后执行，避免执行被替换模型的调用。
+流被取消、失败或调用被 fallback 丢弃时，未提交预览由 vRT 的 cancelled/failed 事件结束。
+此模式保留语音识别输入，取消 TTS 输出队列，普通文字直接以 text delta 返回。上游 Claude 使用 SDK 的 HTTP 流，下游客户端使用 WebSocket。
 
 后台只获得客户端声明、并经现有 Server 白名单许可的工具。没有凭空新增搜索、原文抓取或外部知识能力。
 引用/完整性保障仍需另行实施研究方案；换成 Pi 并不自动解决事实错误。
@@ -51,8 +58,9 @@ Higgs 在最终结果到达后输出流式语音；本版不逐句朗读后台�
 - Pi 工具执行顺序为 sequential，避免并行修改同一 revision。
 - 治理拒绝、客户端超时、应用 ok:false 反馈给 Pi，不能当作成功。
 - 用户打断/关闭会取消 Pi，拒绝待处理工具 Promise，关闭旧结果闸门；旧结果不送入新任务。
-- 取消结果回填给 Higgs，关闭它先前的委派工具调用，避免下一轮残留未配对工具调用。
-- 后台失败不让前台继续说成功；发送通用可恢复错误，不把供应商错误正文当作用户消息。
+- Pi 启动前取消的委派回填 INTERRUPTED；已交接的调用早已收到 accepted，取消或失败不会重复回填。
+- 任务中再次说话会保留当前生成和预览，待最终转写判断含义：补充或确认通过 userUpdate 交给正在运行的 Pi；明确停止会取消；要求重做或换任务会中断旧任务并委派新请求。键盘打断仍立即生效。
+- 后台失败直接通知客户端，不触发 Higgs 回复；不把供应商错误正文当作用户消息。
 - 已经生效的文档修改不会因中断自动撤销；写入超时仍必须读回核对，不能盲目重试。
 
 ## 配置与回滚
@@ -75,8 +83,8 @@ VDOC_SERVER_WORKER_MAX_REQUESTS=12
 ## 验证边界
 
 自动测试使用真实 Pi loop、vRT runtime/Hub/客户端和脚本化的上游模型，验证循环与传输行为。
-这些测试不证明真实 Boson 会稳定委派、逐字发声，也不证明后端模型的事实质量。
-上线前需用实际密钥验证语音转写、长文章参数流、说话打断、网络恢复、应用写入冲突与中文音色。
+这些测试不证明真实 Boson 会稳定委派，也不证明后端模型的事实质量。
+上线前需用实际密钥验证语音转写、长文章参数流、说话打断、网络恢复、应用写入冲突。
 
 
 ## 本地调试入口
@@ -85,14 +93,14 @@ Node 的 development 模式在 `/` 提供仅回环地址可访问的调试页，
 `npm run dev` 自动读取仓库根目录 `.env`，实际环境变量优先；该文件已被 Git 忽略。
 页面只使用开发 client key 与短期会话 grant，模型密钥不发送到浏览器。
 
-可选择连接麦克风或仅发送文字，两者都启用扬声器。浏览器会请求麦克风权限。
+可选择连接麦克风或仅发送文字，两者都只显示文字和文档工具流，不启用扬声器；连接麦克风时浏览器会请求权限。
 后台文字和工具参数预览实时展示；工具参数完整并验证后才提交到本页的独立测试文档。
 测试文档支持稳定 block id、revision/session 前置条件、callId 去重与最近一次插入撤销；
 不支持完整 vdoc 格式操作，不连接正式用户文档，不绕过现有前端的登录或数据库授权。
 
-本地模式已用真实服务验证：Pi 调用 get_context 与 insert_structured_article 成功，
+历史版本曾用真实服务验证：Pi 调用 get_context 与 insert_structured_article 成功，
 测试文档 revision 从 0 到 1、生成标题与正文两个 block，并收到 Higgs 音频。
-这只证明最小链路可用，不能替代真实麦克风、长文、打断和事实质量验收。
+上述音频验收属于旧版；当前版本已取消最终播报，新增脚本化上游与真实 HTTP/WS 的流式、打断、失败和 fallback 测试，尚未重新实测真实模型服务。
 
 
 ### 新建与编辑测试文档
@@ -107,7 +115,7 @@ Node 的 development 模式在 `/` 提供仅回环地址可访问的调试页，
 ### 暂停收音而不打断任务
 
 麦克风连接后可点击“暂停收音”，按钮变为“恢复收音”。暂停立即关闭真实音频帧的转发，
-停止麦克风采集并释放设备；会话、Pi 任务、工具等待和扬声器保持运行。
+停止麦克风采集并释放设备；会话、Pi 任务和工具等待保持运行。
 暂停时通过服务端控制请求结束当前语音；服务端补发合成静音并等待供应商确认，详见下文“不依赖固定静音尾段”的结束确认流程。不会收集或发送后续环境声音。
 恢复时在同一个会话中重新开启麦克风；旧采集回调失效，断开时清理所有采集与定时器。
 “打断”仍是另一个独立按钮；暂停收音不调用 interrupt、close 或清空音频输入。
@@ -123,7 +131,7 @@ Pi 生成 `insert_structured_article` 的工具参数时，现有 `tool.stream` 
 
 ### 暂停收音的结束确认与委派超时（取代客户端固定静音尾段）
 
-本地页面暂停时先关闭采集，再通过已认证 WebSocket 的应用 context 通道发送带唯一 ID 的 `voiceControl: { type: "finish-speech", id }`，并附上当前连接的 documentId。服务端检查文档作用域、参数长度、单一活动模型并去重；该控制不会调用会先取消任务的 AgentSession.commitAudio()。已经进入 Pi、工具执行或播报的任务保持运行。
+本地页面暂停时先关闭采集，再通过已认证 WebSocket 的应用 context 通道发送带唯一 ID 的 `voiceControl: { type: "finish-speech", id }`，并附上当前连接的 documentId。服务端检查文档作用域、参数长度、单一活动模型并去重；该控制不会调用会先取消任务的 AgentSession.commitAudio()。已经进入 Pi 或工具执行的任务保持运行。
 
 真实 Boson 接口限制：自动模式不允许 `input_audio_buffer.commit`，会话开始后也不允许修改 turn_detection。因此 boson-worker 的演员连接从一开始使用 `server_vad`，不再用语义判断决定何时结束。暂停后服务端按实时速度补发当前格式的合成静音，收到供应商 `input.speech.end` 或响应开始即停止；总等待由 15 秒委派超时限制。若已结束语音则不再补发。收到语音结束或最终转写后，若 600ms 内仍无响应开始，补发一次 response.create；自动响应先到则取消补发。不会伪造“已经收到结束确认”。
 
@@ -163,8 +171,8 @@ A real failed deletion request at 2026-10-24 00:52:11 UTC logged "Voice performe
 
 If the performer finishes without a valid delegation and no worker or client tool has run, the adapter now allows exactly one corrective response with the authoritative current user request. It stays within the original delegation deadline and normal continuation limit. Missing final transcription still blocks execution. Invalid tools never execute directly. A second failure reports ACTOR_DELEGATION_FAILED; it does not loop indefinitely. New speech, explicit interruption, timeout or disconnect close the repair path and invalidate late responses.
 
-Worker failures are never retried by replaying the task. Successfully acknowledged mutating tool results are counted: WORKER_FAILED_AFTER_WRITE warns that document changes have already succeeded. A failure during the performer's final reply is VOICE_REPLY_FAILED: Pi's text and confirmed edits remain, and tools are not replayed. Failures before confirmed edits report WORKER_FAILED. Provider errors retain their normal failure path.
+Worker failures are never retried by replaying the task. Successfully acknowledged mutating tool results are counted: WORKER_FAILED_AFTER_WRITE warns that document changes have already succeeded. There is no performer reply after Pi completes; the worker closes the turn directly. Failures before confirmed edits report WORKER_FAILED. Provider errors retain their normal failure path.
 
 The local UI retains the specific task error when the runtime subsequently sends its generic Generation stopped terminator. A lone generic failure gets a useful fallback message directing the user to inspect document/tool results before retrying unfinished work. Stage-prefixed server progress is shown in the status area. This is an application adapter/UI fix; no vRT source or protocol change.
 
-Tests cover missing/wrong-tool delegation followed by a successful single repair, repair exhaustion, an already-applied write followed by Pi failure, voice-only failure after editing, and primary-error preservation.
+Tests cover missing/wrong-tool delegation followed by a successful single repair, repair exhaustion, an already-applied write followed by Pi failure, completion without a Higgs reply, and primary-error preservation.

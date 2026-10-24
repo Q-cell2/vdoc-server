@@ -30,8 +30,8 @@ function controls() {
   button('mute').disabled = !session || !mic?.attached || microphoneBusy || mic.state === 'starting';
   button('mute').textContent = mic?.state === 'paused' ? '恢复收音' : '暂停收音';
   button('mute').setAttribute('aria-pressed', String(mic?.state === 'paused'));
-  el('micStatus').textContent = mic?.state === 'paused' ? '收音已暂停：麦克风已关闭。服务端会确认语音结束，暂停不会取消任务或播报。'
-    : mic?.state === 'listening' ? '正在收音。说完后可点击“暂停收音”，避免其他人的声音打断任务。'
+  el('micStatus').textContent = mic?.state === 'paused' ? '收音已暂停：麦克风已关闭。服务端会确认语音结束，暂停不会取消任务。'
+    : mic?.state === 'listening' ? '正在收音。说完后可点击“暂停收音”，停止采集周围声音，当前任务继续。'
     : mic?.state === 'starting' ? '正在启用麦克风…' : '未启用麦克风；文字输入不受影响。';
 }
 const doc = createTestDocument((renderContent = true) => renderDocument(renderContent));
@@ -142,7 +142,7 @@ async function start(mic: boolean) {
         return (await response.json()).token;
       },
       tools: doc.tools, context: { documentId, title: '本地测试文档', language: 'zh-CN' },
-      audio: { input: capture?.input ?? false, output: 'speaker' }, reconnect: false,
+      audio: { input: capture?.input ?? false, output: false }, reconnect: false,
     });
     if (run !== sequence) { await client.close(); return; }
     session = client;
@@ -158,8 +158,7 @@ async function start(mic: boolean) {
       if (event.role === 'user' && event.final && !executionStage.startsWith('Pi') && !executionStage.includes('文章')) {
         taskError = ''; executionStage = '语音已识别，等待 Higgs 委派（最长 15 秒）'; status(executionStage);
       }
-      if (event.role === 'agent') { executionStage = 'Higgs 正在播报执行结果'; status(executionStage); }
-      el(event.role === 'user' ? 'heard' : 'spoken').textContent = (event.role === 'user' ? '你：' : 'Higgs：') + event.text; });
+      if (event.role === 'user') el('heard').textContent = '你：' + event.text; });
     client.on('state', event => {
       if (event.state === 'idle') { executionStage = ''; status(taskError || '已连接 · 就绪'); }
       else if (event.state === 'listening') { taskError = ''; executionStage = ''; status('正在收音'); }
@@ -178,7 +177,7 @@ async function start(mic: boolean) {
     client.on('error', event => { taskError = generationError(taskError, event.message); articleStream.cancel(); status(taskError); log(event.code + ': ' + event.message); });
     client.on('closed', () => { if (session === client) { articleStream.cancel(); session = undefined; microphone = undefined; void capture?.stop(); controls(); status('连接已关闭，请重新连接'); } });
     client.on('interrupted', () => { articleStream.cancel(); log('已打断；旧任务结果已关闭'); el('preview').textContent = ''; });
-    status(mic ? '已连接 · 可以说话' : '已连接 · 可输入文字，回复通过扬声器播放'); log('实时会话已连接');
+    status(mic ? '已连接 · 可以说话' : '已连接 · 可输入文字，Pi 实时返回结果'); log('实时会话已连接');
   } catch (error) { await disconnect(); status('连接失败：' + (error instanceof Error ? error.message : String(error))); }
   finally { busy = false; controls(); }
 }

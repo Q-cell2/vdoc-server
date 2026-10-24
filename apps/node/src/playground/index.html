@@ -6,14 +6,14 @@
 #draftStatus{color:#304dc5;padding:8px 0;margin:4px 0}#document .streamed{background:#f8faff}#document .streamed:last-child::after{content:"▍";color:#304dc5;animation:blink 1s steps(2) infinite}@keyframes blink{50%{opacity:0}}@media(prefers-reduced-motion:reduce){#document .streamed:last-child::after{animation:none}}
 #document table{border-collapse:collapse;width:100%;margin:14px 0;font-size:15px}#document th,#document td{border:1px solid #cbd2df;padding:8px 10px;text-align:left;vertical-align:top;white-space:pre-wrap}#document th{background:#edf2ff}#document caption{text-align:left;color:#617084;font-size:13px;line-height:1.6;padding:8px 0}#document table.streamed:last-child::after{content:none}
 </style></head><body>
-<h1>Higgs × Pi 本地调试</h1><p class="muted">Higgs 只委派与发声 · Pi 负责思考和工具 · 仅在 fork 的本机开发模式开放</p>
+<h1>Higgs × Pi 本地调试</h1><p class="muted">Higgs 负责传递需求 · Pi 实时返回文字和文档内容 · 仅在 fork 的本机开发模式开放</p>
 <div class="warning">右侧是独立的简化测试文档，不会修改正式 vdoc。页面不接收或显示模型密钥。文本、文档工具输入与语音会发送到已配置的模型服务。</div>
 <div class="layout"><section><div class="card"><div id="status">未连接</div>
 <label for="clientKey">本地开发 client key（不是模型 API key）</label><input id="clientKey" value="vdoc-dev-client-key-not-for-production" autocomplete="off" type="password">
-<div class="actions"><button id="microphone" class="primary">连接麦克风与声音</button><button id="connect">连接文字与声音</button><button id="mute" disabled aria-pressed="false">暂停收音</button><button id="disconnect" disabled>断开</button></div><p id="micStatus" class="muted">未启用麦克风；文字输入不受影响。</p>
+<div class="actions"><button id="microphone" class="primary">连接麦克风</button><button id="connect">连接文字</button><button id="mute" disabled aria-pressed="false">暂停收音</button><button id="disconnect" disabled>断开</button></div><p id="micStatus" class="muted">未启用麦克风；文字输入不受影响。</p>
 <label for="prompt">输入请求，或连接后直接说话</label><textarea id="prompt" placeholder="例如：在文档末尾写一篇介绍多伦多的中文文章，约 800 字。"></textarea>
 <div class="actions"><button id="send" class="primary" disabled>发送</button><button id="interrupt" disabled>打断</button></div>
-<p id="heard" class="muted"></p><h3>后台文字流</h3><div id="answer"></div><p id="spoken" class="muted"></p>
+<p id="heard" class="muted"></p><h3>后台文字流</h3><div id="answer"></div>
 </div><div class="card"><h3>工具与连接事件</h3><pre id="events"></pre><h3>工具参数（调试信息）</h3><pre id="preview"></pre></div></section>
 <section class="card"><h3>本地测试文档</h3><label for="documents">切换文档（新建会保留原文档）</label><select id="documents"></select><label for="documentName">文档名称</label><input id="documentName" maxlength="200"><p id="revision" class="muted"></p><div class="actions"><button id="reset">新建空白文档</button><button id="download">下载文本</button></div><p class="muted">新建只创建空白文档；直接点击正文输入，或发送“写一篇关于……的文章”。</p><p id="draftStatus" role="status" hidden></p><button id="discardDraft" hidden>清除未完成草稿</button><div id="document" aria-label="文档内容"></div></section></div>
 <script type="module" src="/dev/playground.js"></script></body></html>

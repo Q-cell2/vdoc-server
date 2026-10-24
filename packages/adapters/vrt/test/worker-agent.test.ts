@@ -41,7 +41,7 @@ function actorModel() {
   let speak = false;
   let number = 0;
   return fakeModel({ capabilities: { tools: { autoReplyAfterResult: false } }, onCommand(command, session) {
-    if (command.type === 'submitToolResult') speak = (command.output as { ok?: boolean })?.ok === true;
+    if (command.type === 'submitToolResult') speak = 'spokenReply' in (command.output as object);
     if (command.type !== 'respond') return;
     const speaking = speak; speak = false;
     const responseId = `actor-${++number}`;
@@ -89,7 +89,7 @@ const read: AssistantMessage['content'] = [{ type: 'toolCall', id: 'same-provide
 const write: AssistantMessage['content'] = [{ type: 'toolCall', id: 'same-provider-id', name: 'insert_structured_article', arguments: { expectedRevision: 7 } }];
 const done: AssistantMessage['content'] = [{ type: 'text', text: '文章已写入。' }];
 
-it('runs real Pi read/write/final turns through vRT once, streams text, then lets the one-tool actor speak', async () => {
+it('runs real Pi read/write/final turns through vRT and completes directly without a Higgs reply', async () => {
   const { worker, requests } = scriptedWorker([read, write, done]);
   const h = await setup(worker);
   await expect.poll(() => h.ended.mock.calls.length).toBe(1);
@@ -97,15 +97,15 @@ it('runs real Pi read/write/final turns through vRT once, streams text, then let
   expect(h.calls.map(call => call.name)).toEqual(['read_document', 'insert_structured_article']);
   expect(new Set(h.calls.map(call => call.callId)).size).toBe(2);
   expect(h.text.join('')).toBe('文章已写入。');
-  expect(h.voice).toEqual(['任务完成。']);
+  expect(h.voice).toEqual([]);
   expect(requests).toHaveLength(3);
   expect(JSON.stringify(requests[1])).toContain('revision');
   expect(h.actor.session.commandsOf('connect')[0]!.config.tools?.map(tool => tool.name)).toEqual([DELEGATE_TOOL]);
   expect(h.actor.session.commandsOf('connect')[0]!.config.instructions).not.toContain('Worker document instructions');
   const results = h.actor.session.commandsOf('submitToolResult');
   expect(results).toHaveLength(1);
-  expect(results[0]!.output).toEqual({ ok: true, spokenReply: '文章已写入。' });
-  expect(h.actor.session.commandsOf('respond')).toHaveLength(2);
+  expect(results[0]!.output).toEqual({ ok: true, status: 'accepted' });
+  expect(h.actor.session.commandsOf('respond')).toHaveLength(1);
 });
 
 it('feeds a policy denial back to Pi without executing the client write', async () => {
@@ -114,6 +114,42 @@ it('feeds a policy denial back to Pi without executing the client write', async 
   await expect.poll(() => h.ended.mock.calls.length).toBe(1);
   expect(h.calls.map(call => call.name)).toEqual(['read_document']);
   expect(JSON.stringify(requests[2])).toContain('REJECTED');
+});
+
+it('acknowledges handoff immediately, streams before completion and ignores unsolicited Higgs output', async () => {
+  let release!: () => void;
+  const barrier = new Promise<void>(resolve => { release = resolve; });
+  const suffix = '文'.repeat(4500);
+  const worker: WorkerRunner = { async run(_request, context) {
+    context.emit({ type: 'start' });
+    context.emit({ type: 'text', delta: '开始。' });
+    await barrier;
+    context.emit({ type: 'text', delta: suffix });
+    return '开始。' + suffix;
+  } };
+  const h = await setup(worker);
+  try {
+    await expect.poll(() => h.text.join('')).toBe('开始。');
+    expect(h.ended).not.toHaveBeenCalled();
+    expect(h.session.capabilities.output).toMatchObject({ audio: false, text: true });
+    expect(h.actor.session.commandsOf('submitToolResult').map(call => call.output)).toEqual([{ ok: true, status: 'accepted' }]);
+    h.actor.session.emit({ type: 'response.start', responseId: 'unsolicited' });
+    h.actor.session.emit({ type: 'output.text', responseId: 'unsolicited', delta: 'do not show' });
+    h.actor.session.emit({ type: 'output.transcript', responseId: 'unsolicited', itemId: 'voice', delta: 'do not speak' });
+    h.actor.session.emit({ type: 'tool.call', responseId: 'unsolicited', callId: 'duplicate', name: DELEGATE_TOOL, arguments: { request: 'duplicate' } });
+    h.actor.session.emit({ type: 'response.end', responseId: 'unsolicited', status: 'failed', stopReason: 'failed' });
+    release();
+    await expect.poll(() => h.ended.mock.calls.length).toBe(1);
+    expect(h.text.join('')).toBe('开始。' + suffix);
+    expect(h.voice).toEqual([]);
+    expect(h.calls).toEqual([]);
+    expect(h.errors).toEqual([]);
+    expect(h.actor.session.commandsOf('respond')).toHaveLength(1);
+    expect(h.actor.session.commandsOf('submitToolResult')).toHaveLength(1);
+    h.session.sendText('下一项任务');
+    await expect.poll(() => h.ended.mock.calls.length).toBe(2);
+    expect(h.actor.session.commandsOf('respond')).toHaveLength(2);
+  } finally { release(); }
 });
 
 it('validates Pi arguments before dispatch and does not apply partial JSON', async () => {
@@ -154,7 +190,7 @@ it('cancels a delegated run and drops its late tool call, text, and completion',
   await new Promise(resolve => setTimeout(resolve, 10));
   expect(h.calls).toEqual([]);
   expect(h.text).toEqual([]);
-  expect(h.actor.session.commandsOf('submitToolResult').map(call => call.output)).toEqual([{ ok: false, code: 'INTERRUPTED' }]);
+  expect(h.actor.session.commandsOf('submitToolResult').map(call => call.output)).toEqual([{ ok: true, status: 'accepted' }]);
 });
 
 it('times out a hanging worker and ends the active turn', async () => {
@@ -204,13 +240,14 @@ it('aborts real Pi during a client tool and starts a clean next task without rep
   h.session.interrupt('keyboard');
   h.session.sendText('改为只回答，不写文章');
   await expect.poll(() => h.text.join('')).toBe('改为回答。');
-  await expect.poll(() => h.voice.length).toBe(1);
+  await expect.poll(() => h.ended.mock.calls.length).toBe(2);
+  expect(h.voice).toEqual([]);
   // The cancelled browser result cannot revive the first worker or run its queued write.
   h.session.submitClientToolResult(oldCallId, { ok: true, output: { ok: true, revision: 99 } });
   expect(h.calls).toHaveLength(1);
   expect(requests).toHaveLength(2);
   expect(h.actor.session.commandsOf('submitToolResult').map(call => call.output)).toEqual([
-    { ok: false, code: 'INTERRUPTED' }, { ok: true, spokenReply: '改为回答。' },
+    { ok: true, status: 'accepted' }, { ok: true, status: 'accepted' },
   ]);
 });
 
@@ -581,7 +618,7 @@ it.each(['missing', 'wrong-tool'])('repairs a %s delegation once before any work
   session.sendText('删除关于鲁迅的文章');
   await expect.poll(() => ended.mock.calls.length).toBe(1);
   expect(errors).toEqual([]); expect(writes).toBe(1); expect(runs).toBe(1);
-  expect(actor.session.commandsOf('respond')).toHaveLength(3);
+  expect(actor.session.commandsOf('respond')).toHaveLength(2);
   expect(actor.session.commandsOf('respond')[1]!.options?.instructions).toContain('删除关于鲁迅的文章');
 });
 
@@ -606,7 +643,7 @@ it('stops after one unsuccessful delegation repair and reports the real reason w
   expect(errors.at(-1)).toBe('Generation stopped: failed');
 });
 
-it('labels voice-only failure after a successful write and never replays that write', async () => {
+it('does not request a Higgs reply after a successful write, even if that reply would fail', async () => {
   let speaking = false; let responses = 0;
   const actor = fakeModel({ onCommand(command, session) {
     if (command.type === 'submitToolResult') speaking = true;
@@ -633,13 +670,11 @@ it('labels voice-only failure after a successful write and never replays that wr
   session.on('error', event => errors.push(event.error.message));
   session.sendText('任务');
   await expect.poll(() => ended.mock.calls.length).toBe(1);
-  expect(errors[0]).toContain('VOICE_REPLY_FAILED');
-  expect(errors[0]).toContain('文档已有成功修改');
-  expect(errors[0]).toContain('[status=failed, stopReason=failed]');
-  expect(writes).toBe(1); expect(runs).toBe(1); expect(responses).toBe(2);
+  expect(errors).toEqual([]);
+  expect(writes).toBe(1); expect(runs).toBe(1); expect(responses).toBe(1);
 });
 
-it('names a tool call made during the spoken reply as the reason the reply failed', async () => {
+it('ignores a late Higgs tool call after Pi has completed without starting another turn', async () => {
   let speaking = false; let responses = 0;
   const actor = fakeModel({ onCommand(command, session) {
     if (command.type === 'submitToolResult') speaking = true;
@@ -658,7 +693,14 @@ it('names a tool call made during the spoken reply as the reason the reply faile
   const errors: string[] = []; session.on('error', event => errors.push(event.error.message));
   session.sendText('任务');
   await expect.poll(() => ended.mock.calls.length).toBe(1);
-  expect(errors[0]).toContain(`[status=done, stopReason=completed, tool call ${DELEGATE_TOOL} during reply]`);
+  actor.session.emit({ type: 'response.start', responseId: 'late-reply' });
+  actor.session.emit({ type: 'tool.call', responseId: 'late-reply', callId: 'late-delegate', name: DELEGATE_TOOL, arguments: { request: '任务' } });
+  actor.session.emit({ type: 'response.end', responseId: 'late-reply', status: 'done', stopReason: 'completed' });
+  expect(errors).toEqual([]);
+  expect(ended).toHaveBeenCalledTimes(1);
+  expect(responses).toBe(1);
+  expect(actor.session.commandsOf('cancel')).toHaveLength(1);
+  expect(actor.session.commandsOf('submitToolResult')).toHaveLength(1);
 });
 
 it('reports already completed edits if Pi fails after applying a write, without an unsafe full-task retry', async () => {

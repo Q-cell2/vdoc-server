@@ -1,12 +1,12 @@
 import { cascade, type TextPart } from '@vrealtime/cascade';
 import type { RealtimeEvent } from '@vrealtime/core';
 import { describe, expect, it } from 'vitest';
-import { claudeText, createModelRegistry } from '../src';
+import { cascadeClaudeProvider, claudeText, createModelRegistry } from '../src';
 import { toMessages } from '../src/providers/claude-text';
 
 type Block = Record<string, unknown> & { type: string };
 
-/** A double for `client.beta.messages.stream`: streams text deltas, then resolves the final message. */
+/** A double for `client.beta.messages.stream`: streams text and tool argument deltas, then resolves the final message. */
 function fakeClaude(replies: { content: Block[]; stop_reason?: string | null }[]) {
   const requests: Record<string, unknown>[] = [];
   const client = {
@@ -19,7 +19,13 @@ function fakeClaude(replies: { content: Block[]; stop_reason?: string | null }[]
           return {
             async *[Symbol.asyncIterator]() {
               for (const [index, block] of reply.content.entries()) {
+                yield { type: 'content_block_start', index, content_block: block };
+                if (block.type === 'tool_use') {
+                  const json = JSON.stringify(block.input);
+                  yield { type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: json } };
+                }
                 if (block.type === 'text') yield { type: 'content_block_delta', index, delta: { type: 'text_delta', text: block.text } };
+                yield { type: 'content_block_stop', index };
               }
             },
             finalMessage: async () => message,
@@ -46,6 +52,7 @@ describe('claudeText', () => {
     const parts = await collect(claudeText({ apiKey: 'k', client }).stream({ instructions: 'Be brief.', messages: [{ role: 'user', content: 'read it' }], tools }, { signal }));
     expect(parts).toEqual([
       { type: 'text', delta: 'Reading.' },
+      { type: 'tool-call-delta', callId: 'toolu_1', name: 'read_document', argumentsDelta: '{}' },
       { type: 'tool-call', callId: 'toolu_1', name: 'read_document', arguments: {} },
       { type: 'finish', stopReason: 'tool_calls', rawStopReason: 'tool_use', usage: { inputTokens: 11, outputTokens: 7 } },
     ]);
@@ -139,6 +146,12 @@ describe('cascade with Claude', () => {
 });
 
 describe('createModelRegistry', () => {
+  it('configures cascade-claude for streamed text and arguments without a speech output queue', () => {
+    const model = cascadeClaudeProvider({ anthropicApiKey: 'a', openaiApiKey: 'o' }).create({ provider: 'cascade-claude' });
+    expect(model.capabilities.input.audio).toBe(true);
+    expect(model.capabilities.output).toEqual({ audio: false, text: true, formats: [] });
+    expect(model.capabilities.tools.argumentStreaming).toBe(true);
+  });
   it('registers cascade-claude only with both the Anthropic and the OpenAI speech keys', () => {
     expect(createModelRegistry({ anthropicApiKey: 'a', openaiApiKey: 'o' }).has('cascade-claude')).toBe(true);
     expect(createModelRegistry({ anthropicApiKey: 'a' }).has('cascade-claude')).toBe(false);

@@ -1,6 +1,6 @@
 # vdoc-server
 
-vdoc 的语音会话服务端：为文档签发语音会话、配置语音 Agent、审查 Agent 的每一次工具调用并留下审计记录。实时语音由 [vRealTime（vRT）](https://github.com/austinchennn/vRT) 承担，默认语音模型是 Boson Higgs Realtime；同时配置 Anthropic 密钥时默认由后台 Pi Agent 执行任务，Higgs 只负责委派与发声。
+vdoc 的语音会话服务端：为文档签发语音会话、配置语音 Agent、审查 Agent 的每一次工具调用并留下审计记录。实时语音由 [vRealTime（vRT）](https://github.com/austinchennn/vRT) 承担，默认语音模型是 Boson Higgs Realtime；同时配置 Anthropic 密钥时默认由后台 Pi Agent 执行任务，Higgs 只负责接收和委派需求，Pi 通过 WebSocket 实时返回文字与文档工具参数，不再由 Higgs 播报最终结果。
 
 文档修改在浏览器中的 vdoc 里执行；读取结果进入后台模型的任务上下文，不写入普通日志或持久文档存储。服务端负责任务编排和权限审查。
 
@@ -38,7 +38,7 @@ BOSON_API_KEY=... ANTHROPIC_API_KEY=... VDOC_SERVER_MODEL=boson-worker npm run d
 
 Higgs 只获得 `run_worker_agent` 一个工具；Pi 决定所有文档工具调用并接收实际结果。
 权限、确认、版本校验、客户端去重继续沿用现有通道。文字与工具参数增量沿用现有事件；
-vdoc 是否显示它们取决于已有 UI。详见 [Worker agent 架构](docs/WORKER_AGENT.md)。
+调试页实时显示文章/表格预览，正式写入仍在完整参数校验后原子提交；其他 vdoc UI 需订阅 text/tool.stream。详见 [Worker agent 架构](docs/WORKER_AGENT.md)。
 显式设置 `VDOC_SERVER_MODEL=boson` 可恢复旧模式。
 
 申请一个语音会话：
@@ -54,7 +54,7 @@ const session = await connect(`wss://voice.example.com${created.realtimePath}`, 
   auth: () => renewGrant(created.sessionId), // POST …/voice-sessions/{id}/grants
   context: { documentId, title, language: 'zh-CN', vocabulary },
   tools: documentTools,
-  audio: { input: 'mic', output: 'speaker' },
+  audio: { input: 'mic', output: false }, // boson-worker / cascade-claude 返回文字与工具流
 });
 ```
 
@@ -89,7 +89,7 @@ const session = await connect(`wss://voice.example.com${created.realtimePath}`, 
 | `VDOC_SERVER_CLIENTS` | `clientId:key,…`，key 至少 24 字符 |
 | `VDOC_SERVER_ALLOW_CLIENT_ONLY` | 是否接受不带 `X-Vdoc-User-Id` 的请求。生产默认 `false`，开发与测试默认 `true`；只在迁移窗口内临时设为 `true` |
 | `VDOC_SERVER_ALLOWED_ORIGINS` | 允许跨域访问的浏览器来源，逗号分隔 |
-| `VDOC_SERVER_MODEL` | `boson-worker`（Higgs 单工具 + Pi 后台 agent）、`boson`（旧版直接执行）、`openai`、`cascade-claude`、`fake`，可写成 `boson:<model>`。`cascade-claude` 是语音识别 + Claude + 语音合成，默认 `claude-opus-5-5`，可写成 `cascade-claude:<Claude 模型>` |
+| `VDOC_SERVER_MODEL` | `boson-worker`（Higgs 单工具 + Pi 后台 agent）、`boson`（旧版直接执行）、`openai`、`cascade-claude`、`fake`，可写成 `boson:<model>`。`cascade-claude` 是语音识别 + Claude，文字与工具参数通过 WebSocket 实时返回，不合成语音，默认 `claude-opus-5-5`，可写成 `cascade-claude:<Claude 模型>` |
 | `VDOC_SERVER_WORKER_MODEL` | Pi 后台 Anthropic 模型，默认 `claude-sonnet-5-5`，须存在于固定版本的 Pi 模型目录 |
 | `VDOC_SERVER_WORKER_TIMEOUT_MS` | 后台任务总超时，默认 90000，最大 300000；含模型生成和工具等待 |
 | `VDOC_SERVER_WORKER_MAX_REQUESTS` | 后台每任务模型请求次数，默认/最大 12；实际工具仍受每轮 12 次调用的治理限制 |

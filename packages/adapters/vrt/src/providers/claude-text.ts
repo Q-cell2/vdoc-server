@@ -68,16 +68,28 @@ export function claudeText(options: ClaudeTextOptions): TextModel {
       }, { signal });
 
       let spoke = false;
+      const calls = new Map<number, { callId: string; name: string }>();
       for await (const event of stream) {
-        if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+        signal.throwIfAborted();
+        if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') {
+          calls.set(event.index, { callId: event.content_block.id, name: event.content_block.name });
+        } else if (event.type === 'content_block_delta' && event.delta.type === 'input_json_delta') {
+          const call = calls.get(event.index);
+          if (call) yield { type: 'tool-call-delta', ...call, argumentsDelta: event.delta.partial_json };
+        } else if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
           spoke = true;
           yield { type: 'text', delta: event.delta.text };
+        } else if (event.type === 'content_block_stop') {
+          calls.delete(event.index);
         }
       }
       const message = await stream.finalMessage();
+      signal.throwIfAborted();
       const content = afterLastFallback(message.content);
       if (message.stop_reason === 'refusal' && !spoke) yield { type: 'text', delta: REFUSAL_REPLY };
       for (const block of content) {
+        // Deltas are previews only. Execute complete calls after fallback filtering;
+        // vRT closes previews for discarded calls when this response ends.
         if (block.type === 'tool_use') yield { type: 'tool-call', callId: block.id, name: block.name, arguments: block.input };
       }
       remember(remembered, content);

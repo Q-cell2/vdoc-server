@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@types/ws": "8.18.1",
+    "@vrealtime/cascade": "0.2.1",
     "@vrealtime/testing": "0.2.1",
     "tsx": "4.20.6"
   }
