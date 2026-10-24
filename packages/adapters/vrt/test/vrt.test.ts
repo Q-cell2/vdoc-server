@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { VirtualClock, fakeModel } from '@vrealtime/testing';
 import { ModelRegistry, createModelRegistry, fakeProvider, observeErrors, toSessionConfig, withLifecycle } from '../src';
+import { failureCode } from '../src/realtime-host';
 
 describe('ModelRegistry', () => {
   it('creates models by provider id and refuses unknown or duplicate providers', () => {
@@ -55,6 +56,15 @@ describe('withLifecycle', () => {
     await expect(model.connect({})).rejects.toBe(refused);
     expect(lifecycle.failed).toHaveBeenCalledExactlyOnceWith(refused);
     expect(lifecycle.opened).not.toHaveBeenCalled();
+  });
+});
+
+describe('failureCode', () => {
+  it("keeps a client tool's own code from the start of its message, and never the message", () => {
+    expect(failureCode({ code: 'FAILED', message: 'STALE: The document changed. This call did NOT apply an edit.' })).toBe('STALE');
+    expect(failureCode({ code: 'FAILED', message: 'INVALID: operations[0].id: Required' })).toBe('INVALID');
+    expect(failureCode({ code: 'FAILED', message: 'Unknown client tool: x' })).toBe('FAILED');
+    expect(failureCode({ code: 'TIMEOUT', message: 'STALE: not the client' })).toBe('TIMEOUT');
   });
 });
 

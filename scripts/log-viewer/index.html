@@ -75,6 +75,12 @@ const EXPLAIN = [
   [/^DELEGATION_TIMEOUT/, '听到了请求，但 Higgs 15 秒内没有把任务交给 Pi。'],
   [/^ACTOR_DELEGATION_FAILED/, 'Higgs 没按要求把任务交给 Pi（自动修复一次后仍失败）。'],
   [/^Generation stopped: failed/, '这一轮以失败结束（跟同一时间的上一条是同一个问题）。'],
+  [/（STALE）/, '文档在 AI 读取之后又变了（版本号对不上），这次修改没有执行。AI 应重新读取文档再改。'],
+  [/（INVALID）/, '这次修改的参数不符合文档工具的要求（比如缺少段落 ID、目标位置不合法），文档没有被修改。'],
+  [/（TARGET）/, '要修改的位置在文档里找不到或已经不存在，文档没有被修改。'],
+  [/（DUPLICATE）/, '同一个调用 ID 被重复使用但参数不同，被拒绝。'],
+  [/（COMPOSING）/, '用户正在输入（输入法组字中），修改被暂缓或放弃。'],
+  [/（UNAVAILABLE）/, '文档已经不可编辑（切换了文档或连接已断开）。'],
   [/TOOL_BUDGET_EXCEEDED/, '这一轮工具调用超过 12 次上限，多出来的被拒绝。通常是模型把一个修改拆成了很多次调用。'],
 ];
 const explain = text => (EXPLAIN.find(([re]) => re.test(text)) ?? [, ''])[1];

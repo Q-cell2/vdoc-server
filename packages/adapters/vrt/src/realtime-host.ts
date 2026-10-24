@@ -47,6 +47,16 @@ export interface RealtimeRouteInput {
 
 const MAX_LOGGED_MESSAGE = 200;
 
+/**
+ * Client tools that fail report vRT's generic `FAILED`, with their own code leading the message
+ * (vdoc: `STALE: The document changed…`). Keep that code, so the audit says why; never the message,
+ * which may quote arguments.
+ */
+export function failureCode(result: { code: string; message?: string }): string {
+  if (result.code !== 'FAILED') return result.code;
+  return /^([A-Z][A-Z_]{1,31}):/.exec(result.message ?? '')?.[1] ?? result.code;
+}
+
 const defaultScheduler: Scheduler = {
   set: (run, ms) => {
     const handle = setTimeout(run, ms);
@@ -182,7 +192,7 @@ export class RealtimeHost implements RealtimeConnections {
         },
         afterToolCall: (call, result) => {
           void handlers.recordToolResult.execute({
-            sessionId, callId: call.callId, name: call.name, turnId: call.turn.id, ok: result.ok, code: result.ok ? undefined : result.code,
+            sessionId, callId: call.callId, name: call.name, turnId: call.turn.id, ok: result.ok, code: result.ok ? undefined : failureCode(result),
           }).catch((error: unknown) => this.#log('error', 'recording a tool result failed', { sessionId, error: String(error) }));
         },
         onTurnEnd: (turn, metrics) => {
