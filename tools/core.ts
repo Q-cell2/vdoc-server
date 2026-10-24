@@ -15,9 +15,12 @@ export interface DocumentToolHost {
   readDocument(context: ToolContext): unknown | Promise<unknown>;
   readBlocks(ids: readonly string[], context: ToolContext): unknown | Promise<unknown>;
   getContext(context: ToolContext): unknown | Promise<unknown>;
+  searchText(request: Input, context: ToolContext): unknown | Promise<unknown>;
+  listOutline(context: ToolContext): unknown | Promise<unknown>;
   applyOperations(request: Input, context: ToolContext): unknown | Promise<unknown>;
   insertBlock(request: Input, context: ToolContext): unknown | Promise<unknown>;
   deleteBlock(request: Input, context: ToolContext): unknown | Promise<unknown>;
+  duplicateBlock(request: Input, context: ToolContext): unknown | Promise<unknown>;
   undoTurn(turnId: string, context: ToolContext): unknown | Promise<unknown>;
 }
 export const string = (maxLength = 128): Schema => ({ type: 'string', minLength: 1, maxLength });
@@ -69,8 +72,9 @@ export function tool(description: string, parameters: Schema, execute: (input: I
     return execute(input, context);
   } };
 }
-export function operationTool(host: DocumentToolHost, description: string, fields: Record<string, Schema>, operation: (input: Input) => Input): Tool {
-  return tool(description + ' Read first; supply the current session and revision. Stale edits require rereading.', object({ ...version, target, ...fields }), (input, context) => host.applyOperations({
+export function operationTool(host: DocumentToolHost, description: string, fields: Record<string, Schema>, operation: (input: Input) => Input, optional: readonly string[] = []): Tool {
+  const parameters = { ...version, target, ...fields };
+  return tool(description + ' Read first; supply the current session and revision. Stale edits require rereading.', object(parameters, Object.keys(parameters).filter(key => !optional.includes(key))), (input, context) => host.applyOperations({
     id: context.callId, expectedSessionId: input.expectedSessionId, expectedRevision: input.expectedRevision,
     target: input.target, operations: [operation(input)],
   }, context));

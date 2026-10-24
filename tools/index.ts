@@ -30,6 +30,24 @@ import { createSetTextStyleTool } from './formatting/set-text-style';
 export { createSetTextStyleTool } from './formatting/set-text-style';
 import { createSetParagraphStyleTool } from './formatting/set-paragraph-style';
 export { createSetParagraphStyleTool } from './formatting/set-paragraph-style';
+import { createSearchTextTool } from './reading/search-text';
+export { createSearchTextTool } from './reading/search-text';
+import { createListOutlineTool } from './reading/list-outline';
+export { createListOutlineTool } from './reading/list-outline';
+import { createReplaceAllTool } from './text/replace-all';
+export { createReplaceAllTool } from './text/replace-all';
+import { createDuplicateBlockTool } from './blocks/duplicate-block';
+export { createDuplicateBlockTool } from './blocks/duplicate-block';
+import { createInsertTableColumnTool } from './tables/insert-table-column';
+export { createInsertTableColumnTool } from './tables/insert-table-column';
+import { createDeleteTableColumnTool } from './tables/delete-table-column';
+export { createDeleteTableColumnTool } from './tables/delete-table-column';
+import { createSetTableCellTool } from './tables/set-table-cell';
+export { createSetTableCellTool } from './tables/set-table-cell';
+import { createSetBlockTypeTool } from './formatting/set-block-type';
+export { createSetBlockTypeTool } from './formatting/set-block-type';
+import { createSetLinkTool } from './formatting/set-link';
+export { createSetLinkTool } from './formatting/set-link';
 
 export function createDocumentTools(host: DocumentToolHost): Record<string, Tool> {
   return {
@@ -48,5 +66,14 @@ export function createDocumentTools(host: DocumentToolHost): Record<string, Tool
     undo_turn: createUndoTurnTool(host),
     set_text_style: createSetTextStyleTool(host),
     set_paragraph_style: createSetParagraphStyleTool(host),
+    search_text: createSearchTextTool(host),
+    list_outline: createListOutlineTool(host),
+    replace_all: createReplaceAllTool(host),
+    duplicate_block: createDuplicateBlockTool(host),
+    insert_table_column: createInsertTableColumnTool(host),
+    delete_table_column: createDeleteTableColumnTool(host),
+    set_table_cell: createSetTableCellTool(host),
+    set_block_type: createSetBlockTypeTool(host),
+    set_link: createSetLinkTool(host),
   };
 }
