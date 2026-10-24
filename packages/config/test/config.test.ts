@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { VDOC_RISK_TABLE } from '@vdoc-server/domain';
-import { ASK_ASSISTANT, VDOC_TOOLS, WORKER_INSTRUCTIONS, editingAssistantProfile, loadConfig, webSearchAssistantProfile, workerSpeakerProfile } from '../src';
+import { ASK_ASSISTANT, LATE_RESULT_PREFIX, VDOC_TOOLS, WORKER_INSTRUCTIONS, editingAssistantProfile, loadConfig, webSearchAssistantProfile, workerSpeakerProfile } from '../src';
 
 const KEY = 'k'.repeat(40);
 
@@ -107,7 +107,10 @@ describe('reasoning effort profiles', () => {
     expect(profile).toMatchObject({ id: 'worker-speaker', handOffTool: ASK_ASSISTANT, clientToolTimeoutMs: 180_000 });
     expect(profile.allowedTools.has(ASK_ASSISTANT) && VDOC_TOOLS.every((tool) => profile.allowedTools.has(tool))).toBe(true);
     const instructions = profile.instructionsFor({ language: 'zh-CN', documentTitle: 'Notes' });
-    expect(instructions).toContain(`call ${ASK_ASSISTANT} with the user's request`);
+    expect(instructions).toContain(`call ${ASK_ASSISTANT} in the same response, with the user's request`);
+    // Spoken words before the call can be cut off (echo, a cough), taking the call with them.
+    expect(instructions).toContain(`call ${ASK_ASSISTANT} right away, as the first thing in your response, without saying anything before it`);
+    expect(instructions).toContain(LATE_RESULT_PREFIX);
     expect(instructions).toContain('titled "Notes"');
     expect(WORKER_INSTRUCTIONS).toContain('Read before you edit');
     expect(WORKER_INSTRUCTIONS).toContain('Search the web before writing any facts');
