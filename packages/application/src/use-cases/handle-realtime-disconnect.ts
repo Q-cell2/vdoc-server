@@ -1,15 +1,10 @@
-import { VoiceSessionId } from '@vdoc-server/domain';
-import type { Clock } from '../ports';
-import type { VoiceSessionStore } from '../voice-session-store';
-import type { SessionLifecycle } from '../session-lifecycle';
+import { updateSession, type SessionCommandDeps } from './session-command';
+
+/** Command: the realtime connection dropped; end the session. */
 export class HandleRealtimeDisconnect {
-  constructor(private readonly deps: { store: VoiceSessionStore; lifecycle: SessionLifecycle; clock: Clock }) {}
+  constructor(private readonly deps: SessionCommandDeps) {}
+
   async execute(sessionId: string): Promise<void> {
-    const id = VoiceSessionId.parse(sessionId);
-    const session = id.ok ? await this.deps.store.findById(id.value) : undefined;
-    if (!session) return;
-    session.end('disconnected', this.deps.clock.now());
-    const result = await this.deps.lifecycle.persistAndDispatch(session);
-    if (!result.ok) throw new Error(result.error.message);
+    await updateSession(this.deps, sessionId, (session, now) => session.end('disconnected', now));
   }
 }

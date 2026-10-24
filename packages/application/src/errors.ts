@@ -17,6 +17,12 @@ export interface AppError {
 
 export const appError = (code: AppErrorCode, message: string): AppError => ({ code, message });
 
+/** Thrown by fire-and-forget commands, which have no result channel; keeps the code for logs. */
+export class ApplicationFailure extends Error {
+  override readonly name = 'ApplicationFailure';
+  constructor(readonly code: AppErrorCode, message: string) { super(message); }
+}
+
 const FROM_DOMAIN: Record<string, AppErrorCode> = {
   INVALID_ID: 'INVALID_INPUT',
   INVALID_LIMITS: 'INVALID_INPUT',
