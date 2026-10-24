@@ -105,4 +105,18 @@ describe('document tools', () => {
     await expect(tools.delete_text!.run(base, context)).rejects.toThrow();
     expect(host.applyOperations).toHaveBeenCalledTimes(1);
   });
+  it.each([
+    [{ kind: 'text', blockId: 'b1', start: 4, end: 2 }],
+    [{ kind: 'range', from: 9, to: 1 }],
+    [{ kind: 'cells', tableId: 't1', row: 3, col: 0, endRow: 1 }],
+    [{ kind: 'cells', tableId: 't1', row: 0, col: 2, endCol: 1 }],
+  ])('rejects reversed target bounds %o', async target => {
+    const { tools, context, host } = setup();
+    await expect(tools.delete_text!.run({ ...base, target }, context)).rejects.toThrow('arguments.target: invalid bounds');
+    expect(host.applyOperations).not.toHaveBeenCalled();
+  });
+  it('keeps target bound rules out of the schema sent to models', () => {
+    expect(JSON.stringify(setup().tools.delete_text!.parameters)).not.toContain('bounds');
+    expect(JSON.parse(JSON.stringify(setup().tools.delete_text!.parameters))).toEqual(setup().tools.delete_text!.parameters);
+  });
 });
