@@ -1,6 +1,8 @@
 import { SessionLimits, type ConcurrencyStrategy, type ModelChoice } from '@vdoc-server/domain';
 
 export type Environment = 'development' | 'test' | 'production';
+export type WorkerThinking = 'off' | 'low' | 'medium' | 'high';
+const WORKER_THINKING = new Set<string>(['off', 'low', 'medium', 'high']);
 
 /** Everything a composition root needs, already validated. */
 export interface ServerConfig {
@@ -14,7 +16,7 @@ export interface ServerConfig {
   readonly allowedOrigins: readonly string[];
   readonly model: ModelChoice;
   readonly providerKeys: { readonly boson?: string; readonly openai?: string; readonly anthropic?: string };
-  readonly workerAgent: { readonly model: string; readonly timeoutMs: number; readonly maxRequests: number };
+  readonly workerAgent: { readonly model: string; readonly thinking: WorkerThinking; readonly prefetch: boolean; readonly timeoutMs: number; readonly maxRequests: number };
   readonly concurrency: ConcurrencyStrategy;
   readonly limits: SessionLimits;
   /** Development-only defaults that were filled in (logged at startup). */
@@ -81,11 +83,16 @@ export function loadConfig(env: Env): { ok: true; value: ServerConfig } | { ok: 
   if (provider === 'cascade-claude' && !providerKeys.openai) errors.push('OPENAI_API_KEY is required for the cascade-claude model (speech recognition and synthesis).');
   if (provider === 'boson-worker' && !providerKeys.anthropic) errors.push('ANTHROPIC_API_KEY is required for the boson-worker model.');
   const workerAgent = {
-    model: env.VDOC_SERVER_WORKER_MODEL ?? 'claude-sonnet-5-5',
+    model: env.VDOC_SERVER_WORKER_MODEL ?? 'claude-haiku-5-5',
+    thinking: (env.VDOC_SERVER_WORKER_THINKING ?? 'off') as WorkerThinking,
+    prefetch: env.VDOC_SERVER_WORKER_PREFETCH !== 'false',
     timeoutMs: integer(env.VDOC_SERVER_WORKER_TIMEOUT_MS, 90_000, errors, 'VDOC_SERVER_WORKER_TIMEOUT_MS'),
     maxRequests: integer(env.VDOC_SERVER_WORKER_MAX_REQUESTS, 12, errors, 'VDOC_SERVER_WORKER_MAX_REQUESTS'),
   };
   if (!workerAgent.model.trim()) errors.push('VDOC_SERVER_WORKER_MODEL cannot be empty.');
+  if (!WORKER_THINKING.has(workerAgent.thinking)) errors.push('VDOC_SERVER_WORKER_THINKING must be off, low, medium or high.');
+  const prefetch = env.VDOC_SERVER_WORKER_PREFETCH;
+  if (prefetch !== undefined && prefetch !== 'true' && prefetch !== 'false') errors.push('VDOC_SERVER_WORKER_PREFETCH must be true or false.');
   if (workerAgent.timeoutMs > 300_000) errors.push('VDOC_SERVER_WORKER_TIMEOUT_MS cannot exceed 300000.');
   if (workerAgent.maxRequests > 12) errors.push('VDOC_SERVER_WORKER_MAX_REQUESTS cannot exceed 12.');
   const model: ModelChoice = { provider: provider ?? 'fake', ...(modelName ? { model: modelName } : {}) };

@@ -4,7 +4,7 @@
 
 `VDOC_SERVER_MODEL=boson-worker` 把 Higgs Realtime 变成没有工具的前台：它只负责听（语音识别、判断说完）和说（朗读 Pi 的回复）。
 是否执行、执行什么不由 Higgs 决定：服务端拿到用户的最终转写或打字输入后直接启动 Pi。
-后台使用固定版本 `@earendil-works/pi-agent-core` / `pi-ai` 1.4.0，默认 Claude Sonnet 5.5。
+后台使用固定版本 `@earendil-works/pi-agent-core` / `pi-ai` 1.4.0，默认 Claude Haiku 5.5，思考关闭。
 同时存在 Boson 与 Anthropic 密钥、且未指定模型时，此模式为默认。显式 `boson` 保留旧模式。
 Node 需要 22.19+；Cloudflare 复用同一模型适配器，密钥来自 Worker Secrets。
 
@@ -26,6 +26,9 @@ Node 需要 22.19+；Cloudflare 复用同一模型适配器，密钥来自 Worke
 
 Pi 是唯一的后台循环负责人。组合模型声明工具结果后自行续生成，vRT 不再额外请求一轮；
 但它仍然追踪每个 Pi 轮次和真实工具调用，保持已有幂等 ID、取消、审查和客户端超时。
+
+启动 Pi 之前，Worker 先通过同一条 `execute` 通道调用一次 `read_document`（`VDOC_SERVER_WORKER_PREFETCH`，默认开），结果放进任务信封的 `document` 字段，系统提示词说明可直接使用，省掉模型自己先读的那次请求（本地压测每个任务约省 0.7–1.1 秒）。
+这次预读和 Pi 自己读文档一样经过治理审查和审计，占用每轮工具调用次数的 1 次，并计入后台工具结果字符预算。被拒绝、失败、超过 100000 字符或没有声明 `read_document` 时不带 `document`，Pi 照旧自己读。
 没有前台委派这一步，所以不存在“Higgs 没有及时委派”的失败（原 DELEGATION_TIMEOUT / ACTOR_DELEGATION_FAILED）。
 只剩转写本身：语音结束后 15 秒仍无最终转写，报 TRANSCRIPTION_TIMEOUT。空白转写视为噪音，直接结束本轮。
 未修改 vRT 或 vdoc 源码。
@@ -66,7 +69,9 @@ Higgs 在最终结果到达后输出流式语音；本版不逐句朗读后台�
 VDOC_SERVER_MODEL=boson-worker
 BOSON_API_KEY=<secret>
 ANTHROPIC_API_KEY=<secret>
-VDOC_SERVER_WORKER_MODEL=claude-sonnet-5-5
+VDOC_SERVER_WORKER_MODEL=claude-haiku-5-5
+VDOC_SERVER_WORKER_THINKING=off
+VDOC_SERVER_WORKER_PREFETCH=true
 VDOC_SERVER_WORKER_TIMEOUT_MS=90000
 VDOC_SERVER_WORKER_MAX_REQUESTS=12
 ```
