@@ -58,7 +58,7 @@ function speakerModel(status: 'done' | 'failed' | 'cancelled' = 'done') {
     });
   } });
 }
-async function setup(worker: WorkerRunner, options: { beforeToolCall?: (name: string) => boolean | string; timeout?: number; transcriptTimeout?: number; finishTools?: boolean; judge?: UtteranceJudge; actor?: FakeModel; text?: string | null } = {}) {
+async function setup(worker: WorkerRunner, options: { beforeToolCall?: (name: string) => boolean | string; timeout?: number; transcriptTimeout?: number; finishTools?: boolean; judge?: UtteranceJudge; actor?: FakeModel; text?: string | null; tools?: ToolSpec[] } = {}) {
   const actor = options.actor ?? speakerModel();
   const model = delegatedModel(actor, worker, options.timeout ?? 1000, options.transcriptTimeout ?? 1000, options.judge);
   const calls: { name: string; callId: string; args: unknown }[] = [];
@@ -76,7 +76,7 @@ async function setup(worker: WorkerRunner, options: { beforeToolCall?: (name: st
       },
       onTurnEnd: ended,
     },
-  }, { clientTools: tools });
+  }, { clientTools: options.tools ?? tools });
   cleanup.push(() => session.close());
   session.on('tool.call', call => {
     calls.push({ name: call.name, callId: call.callId, args: call.arguments });
@@ -152,6 +152,26 @@ it('reads the document once before Pi starts and hands it over, so Pi needs no r
   expect(sent(requests[0]).systemPrompt).toContain('taken just before this task started');
   expect(h.text.join('')).toBe('文章已写入。');
   expect(h.voice).toEqual(['文章已写入。']);
+});
+
+it('also reads the planning context ahead, so Pi spends no request on get_context either', async () => {
+  const withContext = [...tools, { name: 'get_context', description: 'Context', parameters: { type: 'object', properties: {} } }];
+  const { worker, requests } = scriptedWorker([write, done], { prefetch: true });
+  const h = await setup(worker, { tools: withContext });
+  await expect.poll(() => h.ended.mock.calls.length).toBe(1);
+  expect(h.errors).toEqual([]);
+  expect(h.calls.map(call => call.name)).toEqual(['read_document', 'get_context', 'insert_structured_article']);
+  expect(requests).toHaveLength(2);
+  expect(sent(requests[0]).task).toMatchObject({ document: { ok: true, revision: 7 }, context: { ok: true, revision: 7 } });
+  expect(sent(requests[0]).systemPrompt).toContain('Use it instead of calling get_context');
+
+  // A denied context read leaves get_context to Pi and keeps the document.
+  const denied = scriptedWorker([write, done], { prefetch: true });
+  const g = await setup(denied.worker, { tools: withContext, beforeToolCall: name => name !== 'get_context' });
+  await expect.poll(() => g.ended.mock.calls.length).toBe(1);
+  expect(sent(denied.requests[0]).task).toHaveProperty('document');
+  expect(sent(denied.requests[0]).task).not.toHaveProperty('context');
+  expect(sent(denied.requests[0]).systemPrompt).not.toContain('instead of calling get_context');
 });
 
 it('leaves the document to Pi when the prefetch read is denied or the option is off', async () => {

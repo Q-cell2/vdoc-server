@@ -27,8 +27,9 @@ Node 需要 22.19+；Cloudflare 复用同一模型适配器，密钥来自 Worke
 Pi 是唯一的后台循环负责人。组合模型声明工具结果后自行续生成，vRT 不再额外请求一轮；
 但它仍然追踪每个 Pi 轮次和真实工具调用，保持已有幂等 ID、取消、审查和客户端超时。
 
-启动 Pi 之前，Worker 先通过同一条 `execute` 通道调用一次 `read_document`（`VDOC_SERVER_WORKER_PREFETCH`，默认开），结果放进任务信封的 `document` 字段，系统提示词说明可直接使用，省掉模型自己先读的那次请求（本地压测每个任务约省 0.7–1.1 秒）。
-这次预读和 Pi 自己读文档一样经过治理审查和审计，占用每轮工具调用次数的 1 次，并计入后台工具结果字符预算。被拒绝、失败、超过 100000 字符或没有声明 `read_document` 时不带 `document`，Pi 照旧自己读。
+启动 Pi 之前，Worker 先通过同一条 `execute` 通道依次调用 `read_document` 和 `get_context`（`VDOC_SERVER_WORKER_PREFETCH`，默认开），结果放进任务信封的 `document` 和 `context` 字段，系统提示词说明可直接使用，省掉模型自己先读的请求（只预读文档时，本地压测每个任务约省 0.7–1.1 秒）。
+`get_context` 也要预读：vdoc 的编辑规则要求编辑前读上下文，续写还要用它独有的 `recentEdits`，只预读文档时 Pi 仍可能先花一轮模型请求去调 `get_context`。它给出的选区按当前轮冻结，所以预读结果在整个任务内有效。
+预读和 Pi 自己读一样经过治理审查和审计，每项占用每轮工具调用次数的 1 次，并计入后台工具结果字符预算。某项被拒绝、失败、累计超过 100000 字符或客户端没有声明该工具时，信封里不带这一项，Pi 照旧自己读。
 没有前台委派这一步，所以不存在“Higgs 没有及时委派”的失败（原 DELEGATION_TIMEOUT / ACTOR_DELEGATION_FAILED）。
 只剩转写本身：语音结束后 15 秒仍无最终转写，报 TRANSCRIPTION_TIMEOUT。空白转写视为噪音，直接结束本轮。
 未修改 vRT 或 vdoc 源码。
