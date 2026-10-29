@@ -174,6 +174,46 @@ it('also reads the planning context ahead, so Pi spends no request on get_contex
   expect(sent(denied.requests[0]).systemPrompt).not.toContain('instead of calling get_context');
 });
 
+/** A complete Anthropic stream for one short final reply. */
+function finalReplyStream(text: string): Response {
+  const events = [
+    { type: 'message_start', message: { id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-haiku-5-5', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 3 } },
+    { type: 'message_stop' },
+  ];
+  return new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } });
+}
+
+it('retries a model request that fails before any response, as the official SDK does', async () => {
+  let attempts = 0;
+  vi.stubGlobal('fetch', async () => {
+    if (++attempts === 1) throw new TypeError('fetch failed');
+    return finalReplyStream('完成。');
+  });
+  try {
+    const worker = createPiWorker({ apiKey: 'test' });
+    const reply = await worker.run({ instructions: 'Worker instructions.', prompt: JSON.stringify({ userRequest: '你好' }), tools: [] },
+      { signal: new AbortController().signal, emit: () => {}, execute: async () => ({}) });
+    expect(reply).toBe('完成。');
+    expect(attempts).toBe(2);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it('keeps what Pi writes alongside its tool calls private and shows only its final reply', async () => {
+  const noted: AssistantMessage['content'] = [{ type: 'text', text: 'The second paragraph is p2. I will write there.' }, ...write];
+  const { worker } = scriptedWorker([noted, done], { prefetch: true });
+  const h = await setup(worker);
+  await expect.poll(() => h.ended.mock.calls.length).toBe(1);
+  expect(h.calls.map(call => call.name)).toEqual(['read_document', 'insert_structured_article']);
+  expect(h.text.join('')).toBe('文章已写入。');
+  expect(h.voice).toEqual(['文章已写入。']);
+});
+
 it('leaves the document to Pi when the prefetch read is denied or the option is off', async () => {
   let reads = 0;
   const denied = scriptedWorker([read, write, done], { prefetch: true });
